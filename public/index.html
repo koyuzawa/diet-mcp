@@ -1,0 +1,759 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ダイエットダッシュボード</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚖️</text></svg>">
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7;
+    --surface: #fcfcfb;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --muted: #898781;
+    --grid: #e1e0d9;
+    --baseline: #c3c2b7;
+    --border: rgba(11, 11, 11, 0.10);
+    --s1: #2a78d6;   /* series 1: blue */
+    --s2: #eb6834;   /* series 2: orange */
+    --s3: #1baf7a;   /* series 3: aqua */
+    --good-text: #006300;
+    --bad: #d03b3b;
+    --meter-track: #cde2fb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --page: #0d0d0d;
+      --surface: #1a1a19;
+      --ink: #ffffff;
+      --ink-2: #c3c2b7;
+      --muted: #898781;
+      --grid: #2c2c2a;
+      --baseline: #383835;
+      --border: rgba(255, 255, 255, 0.10);
+      --s1: #3987e5;
+      --s2: #d95926;
+      --s3: #199e70;
+      --good-text: #0ca30c;
+      --bad: #d03b3b;
+      --meter-track: #184f95;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 20px 16px 48px; }
+  header.top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  header.top h1 { font-size: 20px; font-weight: 700; margin: 0; }
+  header.top .sub { color: var(--muted); font-size: 12px; }
+
+  .filters { display: flex; gap: 6px; margin-bottom: 16px; }
+  .filters button {
+    font: inherit; font-size: 13px; color: var(--ink-2);
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 5px 12px; cursor: pointer;
+  }
+  .filters button:hover { color: var(--ink); }
+  .filters button[aria-pressed="true"] { color: var(--ink); font-weight: 600; border-color: var(--baseline); }
+  .filters button[aria-pressed="true"]::before { content: "✓ "; font-weight: 700; }
+
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .tile {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 14px 16px;
+  }
+  .tile .label { color: var(--ink-2); font-size: 12px; }
+  .tile .value { font-size: 26px; font-weight: 600; margin-top: 2px; }
+  .tile .value small { font-size: 14px; font-weight: 500; color: var(--ink-2); margin-left: 2px; }
+  .tile .delta { font-size: 12px; margin-top: 2px; color: var(--ink-2); }
+  .tile .delta.good { color: var(--good-text); }
+  .tile .delta.bad { color: var(--bad); }
+  .meter { margin-top: 8px; height: 6px; border-radius: 3px; background: var(--meter-track); overflow: hidden; }
+  .meter > i { display: block; height: 100%; background: var(--s1); border-radius: 3px; }
+  .meter > i.over { background: var(--bad); }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px; margin-bottom: 16px; position: relative;
+  }
+  .card h2 { font-size: 14px; font-weight: 600; margin: 0 0 4px; }
+  .card .desc { color: var(--muted); font-size: 12px; margin: 0 0 10px; }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--ink-2); margin: 0 0 8px; }
+  .legend .key { display: inline-flex; align-items: center; gap: 6px; }
+  .legend .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+  .chart { width: 100%; }
+  .chart svg { display: block; width: 100%; }
+  .empty { color: var(--muted); font-size: 13px; padding: 32px 0; text-align: center; }
+
+  .tooltip {
+    position: absolute; pointer-events: none; z-index: 10; display: none;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,.12); padding: 8px 10px; font-size: 12px;
+    min-width: 120px;
+  }
+  .tooltip .tt-date { color: var(--muted); margin-bottom: 4px; }
+  .tooltip .tt-row { display: flex; align-items: center; gap: 6px; }
+  .tooltip .tt-key { width: 12px; height: 0; border-top: 3px solid; border-radius: 2px; }
+  .tooltip .tt-val { font-weight: 700; }
+  .tooltip .tt-name { color: var(--ink-2); }
+
+  details.table-view { margin-bottom: 16px; }
+  details.table-view summary { cursor: pointer; color: var(--ink-2); font-size: 13px; padding: 4px 2px; }
+  table.data { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; font-size: 13px; }
+  table.data th, table.data td { padding: 6px 10px; border-bottom: 1px solid var(--grid); text-align: right; font-variant-numeric: tabular-nums; }
+  table.data th:first-child, table.data td:first-child { text-align: left; }
+  table.data th { color: var(--ink-2); font-weight: 600; }
+  table.data tr:last-child td { border-bottom: none; }
+
+  ul.entries { list-style: none; margin: 0; padding: 0; }
+  ul.entries li { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--grid); }
+  ul.entries li:last-child { border-bottom: none; }
+  ul.entries .n { color: var(--ink); }
+  ul.entries .meta { color: var(--muted); font-size: 12px; }
+  ul.entries .kcal { font-variant-numeric: tabular-nums; color: var(--ink-2); white-space: nowrap; }
+
+  .auth { max-width: 420px; margin: 60px auto; text-align: center; }
+  .auth input { font: inherit; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); width: 100%; margin: 12px 0; }
+  .auth button { font: inherit; padding: 8px 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); cursor: pointer; }
+  .error-note { color: var(--bad); font-size: 13px; }
+  footer { color: var(--muted); font-size: 12px; margin-top: 24px; }
+  footer code { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
+</style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script>
+"use strict";
+const app = document.getElementById("app");
+let DAYS = Number(localStorage.getItem("diet_days") || 30);
+if (![7, 14, 30, 90].includes(DAYS)) DAYS = 30;
+let SUMMARY = null;
+
+const cssVar = (name) =>
+  getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+const fmt = (n, digits = 0) =>
+  n === null || n === undefined
+    ? "—"
+    : Number(n).toLocaleString("ja-JP", { maximumFractionDigits: digits });
+
+const mmdd = (date) => {
+  const [, m, d] = date.split("-");
+  return `${Number(m)}/${Number(d)}`;
+};
+
+function authHeaders() {
+  const t = localStorage.getItem("diet_token");
+  return t ? { authorization: "Bearer " + t } : {};
+}
+
+async function load() {
+  let res;
+  try {
+    res = await fetch(`/api/summary?days=${DAYS}`, { headers: authHeaders() });
+  } catch {
+    renderError("サーバーに接続できませんでした。");
+    return;
+  }
+  if (res.status === 401) { renderAuth(); return; }
+  if (!res.ok) {
+    renderError(`データを取得できませんでした (HTTP ${res.status})。D1のマイグレーションが未適用の可能性があります。`);
+    return;
+  }
+  SUMMARY = await res.json();
+  render();
+}
+
+function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+
+function h(tag, attrs = {}, ...children) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v);
+  }
+  for (const c of children) {
+    if (c === null || c === undefined) continue;
+    el.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
+  }
+  return el;
+}
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+function s(tag, attrs = {}, ...children) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  for (const c of children) {
+    el.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
+  }
+  return el;
+}
+
+function renderAuth() {
+  clear(app);
+  app.appendChild(
+    h("div", { class: "auth" },
+      h("h1", {}, "ダイエットダッシュボード"),
+      h("p", { class: "error-note" }, "アクセストークンが必要です。"),
+      h("input", { type: "password", id: "tok", placeholder: "AUTH_TOKEN を入力", value: localStorage.getItem("diet_token") || "" }),
+      h("button", {
+        onclick: () => {
+          localStorage.setItem("diet_token", document.getElementById("tok").value.trim());
+          load();
+        },
+      }, "接続"),
+    ),
+  );
+}
+
+function renderError(msg) {
+  clear(app);
+  app.appendChild(h("div", { class: "auth" },
+    h("h1", {}, "ダイエットダッシュボード"),
+    h("p", { class: "error-note" }, msg),
+    h("button", { onclick: load }, "再読み込み"),
+  ));
+}
+
+/* ---------- ticks ---------- */
+function niceTicks(min, max, count = 4) {
+  if (max <= min) max = min + 1;
+  const span = max - min;
+  const rawStep = span / count;
+  const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
+  let step = mag;
+  for (const m of [1, 2, 2.5, 5, 10]) {
+    if (rawStep <= m * mag) { step = m * mag; break; }
+  }
+  const ticks = [];
+  const t0 = Math.ceil(min / step) * step;
+  for (let t = t0; t <= max + 1e-9; t += step) ticks.push(Math.round(t * 100) / 100);
+  return ticks;
+}
+
+/* ---------- tooltip ---------- */
+function makeTooltip(card) {
+  const tip = h("div", { class: "tooltip" });
+  card.appendChild(tip);
+  return {
+    show(rows, dateLabel, xInCard, yInCard) {
+      clear(tip);
+      tip.appendChild(h("div", { class: "tt-date" }, dateLabel));
+      for (const r of rows) {
+        const row = h("div", { class: "tt-row" });
+        if (r.color) {
+          const key = h("span", { class: "tt-key" });
+          key.style.borderTopColor = r.color;
+          row.appendChild(key);
+        }
+        row.appendChild(h("span", { class: "tt-val" }, r.value));
+        row.appendChild(h("span", { class: "tt-name" }, r.name));
+        tip.appendChild(row);
+      }
+      tip.style.display = "block";
+      const cw = card.clientWidth;
+      const tw = tip.offsetWidth;
+      let left = xInCard + 12;
+      if (left + tw > cw - 8) left = xInCard - tw - 12;
+      tip.style.left = Math.max(8, left) + "px";
+      tip.style.top = Math.max(8, yInCard - 10) + "px";
+    },
+    hide() { tip.style.display = "none"; },
+  };
+}
+
+/* ---------- chart frame (axes + grid) ---------- */
+const M = { top: 14, right: 16, bottom: 26, left: 46 };
+const CH = 220;
+
+function frame(svg, w, yTicks, yScale, unit) {
+  for (const t of yTicks) {
+    const y = yScale(t);
+    svg.appendChild(s("line", { x1: M.left, x2: w - M.right, y1: y, y2: y, stroke: cssVar("--grid"), "stroke-width": 1 }));
+    svg.appendChild(s("text", {
+      x: M.left - 8, y: y + 4, "text-anchor": "end",
+      fill: cssVar("--muted"), "font-size": 11, style: "font-variant-numeric: tabular-nums",
+    }, fmt(t, 2)));
+  }
+  svg.appendChild(s("line", {
+    x1: M.left, x2: w - M.right, y1: CH - M.bottom, y2: CH - M.bottom,
+    stroke: cssVar("--baseline"), "stroke-width": 1,
+  }));
+  if (unit) {
+    svg.appendChild(s("text", { x: M.left - 8, y: M.top - 2, "text-anchor": "end", fill: cssVar("--muted"), "font-size": 10 }, unit));
+  }
+}
+
+function xLabels(svg, dates, xAt) {
+  const maxLabels = Math.max(3, Math.floor((svg.width.baseVal.value - M.left - M.right) / 56));
+  const stride = Math.ceil(dates.length / maxLabels);
+  dates.forEach((d, i) => {
+    if (i % stride !== 0 && i !== dates.length - 1) return;
+    if (i !== dates.length - 1 && (dates.length - 1 - i) < stride * 0.6) return;
+    svg.appendChild(s("text", {
+      x: xAt(i), y: CH - M.bottom + 16, "text-anchor": "middle",
+      fill: cssVar("--muted"), "font-size": 11, style: "font-variant-numeric: tabular-nums",
+    }, mmdd(d)));
+  });
+}
+
+function targetLine(svg, w, y, label) {
+  svg.appendChild(s("line", { x1: M.left, x2: w - M.right, y1: y, y2: y, stroke: cssVar("--muted"), "stroke-width": 1 }));
+  svg.appendChild(s("text", {
+    x: w - M.right, y: y - 5, "text-anchor": "end", fill: cssVar("--muted"), "font-size": 10,
+  }, label));
+}
+
+/* ---------- weight chart ---------- */
+function weightChart(container, card) {
+  const summary = SUMMARY;
+  clear(container);
+  const dates = summary.daily.map((d) => d.date);
+  const points = summary.weights
+    .map((r) => ({ ...r, i: dates.indexOf(r.date) }))
+    .filter((p) => p.i >= 0);
+  if (points.length === 0) {
+    container.appendChild(h("div", { class: "empty" }, "まだ体重の記録がありません。MCP経由で「体重◯◯kg」と記録すると表示されます。"));
+    return;
+  }
+  const w = Math.max(320, container.clientWidth);
+  const svg = s("svg", { width: w, height: CH, viewBox: `0 0 ${w} ${CH}`, role: "img", "aria-label": "体重の推移" });
+
+  const target = summary.goals.target_weight_kg;
+  const values = points.map((p) => p.weight_kg);
+  let lo = Math.min(...values, target ?? Infinity);
+  let hi = Math.max(...values, target ?? -Infinity);
+  const pad = Math.max((hi - lo) * 0.15, 0.6);
+  lo -= pad; hi += pad;
+  const yScale = (v) => M.top + (hi - v) / (hi - lo) * (CH - M.top - M.bottom);
+  const xAt = (i) => dates.length === 1
+    ? (M.left + w - M.right) / 2
+    : M.left + (i / (dates.length - 1)) * (w - M.left - M.right);
+
+  frame(svg, w, niceTicks(lo, hi, 4), yScale, "kg");
+  xLabels(svg, dates, xAt);
+  if (target !== undefined) targetLine(svg, w, yScale(target), `目標 ${fmt(target, 1)}kg`);
+
+  const c1 = cssVar("--s1");
+  const surface = cssVar("--surface");
+  const path = points.map((p, k) => `${k === 0 ? "M" : "L"}${xAt(p.i)},${yScale(p.weight_kg)}`).join(" ");
+  if (points.length > 1) {
+    const areaD = `${path} L${xAt(points[points.length - 1].i)},${CH - M.bottom} L${xAt(points[0].i)},${CH - M.bottom} Z`;
+    svg.appendChild(s("path", { d: areaD, fill: c1, "fill-opacity": 0.1 }));
+    svg.appendChild(s("path", { d: path, fill: "none", stroke: c1, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+  }
+  const markers = [];
+  points.forEach((p, k) => {
+    const last = k === points.length - 1;
+    if (points.length <= 40 || last) {
+      const dot = s("circle", {
+        cx: xAt(p.i), cy: yScale(p.weight_kg), r: last ? 4.5 : 4,
+        fill: c1, stroke: surface, "stroke-width": 2,
+      });
+      svg.appendChild(dot);
+      markers.push(dot);
+    }
+  });
+  const lastP = points[points.length - 1];
+  const lx = xAt(lastP.i);
+  svg.appendChild(s("text", {
+    x: Math.min(lx, w - M.right - 4), y: yScale(lastP.weight_kg) - 10,
+    "text-anchor": lx > w - 70 ? "end" : "middle",
+    fill: cssVar("--ink"), "font-size": 12, "font-weight": 600,
+  }, `${fmt(lastP.weight_kg, 1)}kg`));
+
+  // crosshair + tooltip (pointer / keyboard)
+  const tip = makeTooltip(card);
+  const hair = s("line", { y1: M.top, y2: CH - M.bottom, stroke: cssVar("--baseline"), "stroke-width": 1, visibility: "hidden" });
+  svg.appendChild(hair);
+  const overlay = s("rect", {
+    x: M.left, y: 0, width: Math.max(1, w - M.left - M.right), height: CH,
+    fill: "transparent", tabindex: 0, "aria-label": "グラフの値を読む（左右キーで移動）",
+  });
+  overlay.style.outline = "none";
+  svg.appendChild(overlay);
+  let focusIdx = points.length - 1;
+  const showAt = (k) => {
+    const p = points[k];
+    const x = xAt(p.i);
+    hair.setAttribute("x1", x); hair.setAttribute("x2", x);
+    hair.setAttribute("visibility", "visible");
+    const rows = [{ color: c1, value: `${fmt(p.weight_kg, 1)} kg`, name: "体重" }];
+    if (p.body_fat_pct !== null && p.body_fat_pct !== undefined) {
+      rows.push({ color: null, value: `${fmt(p.body_fat_pct, 1)} %`, name: "体脂肪率" });
+    }
+    const svgRect = svg.getBoundingClientRect();
+    const cardRect = card.getBoundingClientRect();
+    tip.show(rows, p.date, svgRect.left - cardRect.left + x, svgRect.top - cardRect.top + yScale(p.weight_kg));
+  };
+  overlay.addEventListener("pointermove", (ev) => {
+    const rect = svg.getBoundingClientRect();
+    const px = ev.clientX - rect.left;
+    let best = 0, bestD = Infinity;
+    points.forEach((p, k) => {
+      const d = Math.abs(xAt(p.i) - px);
+      if (d < bestD) { bestD = d; best = k; }
+    });
+    focusIdx = best;
+    showAt(best);
+  });
+  overlay.addEventListener("pointerleave", () => { hair.setAttribute("visibility", "hidden"); tip.hide(); });
+  overlay.addEventListener("focus", () => showAt(focusIdx));
+  overlay.addEventListener("blur", () => { hair.setAttribute("visibility", "hidden"); tip.hide(); });
+  overlay.addEventListener("keydown", (ev) => {
+    if (ev.key === "ArrowLeft") { focusIdx = Math.max(0, focusIdx - 1); showAt(focusIdx); ev.preventDefault(); }
+    if (ev.key === "ArrowRight") { focusIdx = Math.min(points.length - 1, focusIdx + 1); showAt(focusIdx); ev.preventDefault(); }
+  });
+
+  container.appendChild(svg);
+}
+
+/* ---------- shared bar helpers ---------- */
+function bandGeom(w, n) {
+  const innerW = w - M.left - M.right;
+  const band = innerW / n;
+  const barW = Math.min(24, Math.max(3, band - 4));
+  return { band, barW, x0: (i) => M.left + i * band + (band - barW) / 2, center: (i) => M.left + i * band + band / 2 };
+}
+
+function roundedTopRect(x, y, wd, ht, r) {
+  if (ht <= 0) return null;
+  const rr = Math.min(r, wd / 2, ht);
+  return s("path", {
+    d: `M${x},${y + ht} L${x},${y + rr} Q${x},${y} ${x + rr},${y} L${x + wd - rr},${y} Q${x + wd},${y} ${x + wd},${y + rr} L${x + wd},${y + ht} Z`,
+  });
+}
+
+function barHover(svg, card, geom, n, buildRows, dateOf, liftTargets) {
+  const tip = makeTooltip(card);
+  for (let i = 0; i < n; i++) {
+    const rows = buildRows(i);
+    if (!rows) continue;
+    const hit = s("rect", {
+      x: M.left + i * geom.band, y: M.top, width: geom.band, height: CH - M.top - M.bottom,
+      fill: "transparent", tabindex: 0, "aria-label": `${dateOf(i)} の値`,
+    });
+    hit.style.outline = "none";
+    const show = (ev) => {
+      for (const t of liftTargets(i)) t.setAttribute("opacity", "0.75");
+      const svgRect = svg.getBoundingClientRect();
+      const cardRect = card.getBoundingClientRect();
+      tip.show(rows, dateOf(i), svgRect.left - cardRect.left + geom.center(i), svgRect.top - cardRect.top + M.top + 20);
+    };
+    const hide = () => {
+      for (const t of liftTargets(i)) t.setAttribute("opacity", "1");
+      tip.hide();
+    };
+    hit.addEventListener("pointerenter", show);
+    hit.addEventListener("pointerleave", hide);
+    hit.addEventListener("focus", show);
+    hit.addEventListener("blur", hide);
+    svg.appendChild(hit);
+  }
+}
+
+/* ---------- calorie chart ---------- */
+function calorieChart(container, card) {
+  const summary = SUMMARY;
+  clear(container);
+  const daily = summary.daily;
+  if (!daily.some((d) => d.calories_in !== null)) {
+    container.appendChild(h("div", { class: "empty" }, "まだ食事の記録がありません。"));
+    return;
+  }
+  const w = Math.max(320, container.clientWidth);
+  const svg = s("svg", { width: w, height: CH, viewBox: `0 0 ${w} ${CH}`, role: "img", "aria-label": "日別の摂取カロリー" });
+  const target = summary.goals.daily_calorie_target;
+  const maxV = Math.max(...daily.map((d) => d.calories_in ?? 0), target ?? 0, 100) * 1.12;
+  const yScale = (v) => M.top + (maxV - v) / maxV * (CH - M.top - M.bottom);
+  const geom = bandGeom(w, daily.length);
+
+  frame(svg, w, niceTicks(0, maxV, 4).filter((t) => t > 0), yScale, "kcal");
+  xLabels(svg, daily.map((d) => d.date), geom.center);
+
+  const c1 = cssVar("--s1");
+  const bars = new Map();
+  daily.forEach((d, i) => {
+    if (d.calories_in === null) return;
+    const y = yScale(d.calories_in);
+    const bar = roundedTopRect(geom.x0(i), y, geom.barW, CH - M.bottom - y, 4);
+    if (bar) { bar.setAttribute("fill", c1); svg.appendChild(bar); bars.set(i, bar); }
+  });
+  if (target !== undefined) targetLine(svg, w, yScale(target), `目標 ${fmt(target)}kcal`);
+
+  barHover(
+    svg, card, geom, daily.length,
+    (i) => {
+      const d = daily[i];
+      if (d.calories_in === null && d.calories_burned === null) return null;
+      const rows = [{ color: c1, value: `${fmt(d.calories_in ?? 0)} kcal`, name: "摂取" }];
+      if (d.calories_burned !== null) rows.push({ color: null, value: `${fmt(d.calories_burned)} kcal`, name: "運動で消費" });
+      if (target !== undefined) rows.push({ color: null, value: `${fmt(target)} kcal`, name: "目標" });
+      return rows;
+    },
+    (i) => daily[i].date,
+    (i) => (bars.has(i) ? [bars.get(i)] : []),
+  );
+  container.appendChild(svg);
+}
+
+/* ---------- PFC stacked chart ---------- */
+const PFC = [
+  { key: "protein_g", label: "たんぱく質", varName: "--s1" },
+  { key: "fat_g", label: "脂質", varName: "--s2" },
+  { key: "carbs_g", label: "炭水化物", varName: "--s3" },
+];
+
+function pfcChart(container, card) {
+  const summary = SUMMARY;
+  clear(container);
+  const daily = summary.daily;
+  const hasData = daily.some((d) => PFC.some((p) => d[p.key] !== null && d[p.key] > 0));
+  if (!hasData) {
+    container.appendChild(h("div", { class: "empty" }, "PFC（たんぱく質・脂質・炭水化物）の記録がまだありません。食事記録にPFCを含めると表示されます。"));
+    return;
+  }
+  const w = Math.max(320, container.clientWidth);
+  const svg = s("svg", { width: w, height: CH, viewBox: `0 0 ${w} ${CH}`, role: "img", "aria-label": "日別のPFCバランス" });
+  const totals = daily.map((d) => PFC.reduce((sum, p) => sum + (d[p.key] ?? 0), 0));
+  const maxV = Math.max(...totals, 10) * 1.12;
+  const yScale = (v) => M.top + (maxV - v) / maxV * (CH - M.top - M.bottom);
+  const geom = bandGeom(w, daily.length);
+
+  frame(svg, w, niceTicks(0, maxV, 4).filter((t) => t > 0), yScale, "g");
+  xLabels(svg, daily.map((d) => d.date), geom.center);
+
+  const colors = PFC.map((p) => cssVar(p.varName));
+  const GAP = 2;
+  const segs = new Map();
+  daily.forEach((d, i) => {
+    let acc = 0;
+    const list = [];
+    PFC.forEach((p, si) => {
+      const v = d[p.key] ?? 0;
+      if (v <= 0) return;
+      const yTop = yScale(acc + v);
+      const yBot = yScale(acc);
+      const isTop = PFC.slice(si + 1).every((q) => !(d[q.key] > 0));
+      const gapAdj = acc > 0 ? GAP : 0;
+      const height = yBot - yTop - gapAdj;
+      if (height > 0) {
+        const seg = isTop
+          ? roundedTopRect(geom.x0(i), yTop, geom.barW, height, 4)
+          : s("rect", { x: geom.x0(i), y: yTop, width: geom.barW, height });
+        if (seg) { seg.setAttribute("fill", colors[si]); svg.appendChild(seg); list.push(seg); }
+      }
+      acc += v;
+    });
+    if (list.length) segs.set(i, list);
+  });
+
+  barHover(
+    svg, card, geom, daily.length,
+    (i) => {
+      const d = daily[i];
+      if (!PFC.some((p) => d[p.key] !== null)) return null;
+      return PFC.map((p, si) => ({ color: colors[si], value: `${fmt(d[p.key] ?? 0)} g`, name: p.label }));
+    },
+    (i) => daily[i].date,
+    (i) => segs.get(i) ?? [],
+  );
+  container.appendChild(svg);
+}
+
+/* ---------- KPI tiles ---------- */
+function kpiTiles() {
+  const sm = SUMMARY;
+  const tiles = h("div", { class: "kpis" });
+  const todayRow = sm.daily[sm.daily.length - 1] ?? {};
+  const goals = sm.goals;
+
+  {
+    const tile = h("div", { class: "tile" }, h("div", { class: "label" }, "現在の体重"));
+    if (sm.latest_weight) {
+      tile.appendChild(h("div", { class: "value" }, fmt(sm.latest_weight.weight_kg, 1), h("small", {}, "kg")));
+      const prev = sm.weights.length > 1 ? sm.weights[0] : null;
+      if (prev && prev.date !== sm.latest_weight.date) {
+        const diff = sm.latest_weight.weight_kg - prev.weight_kg;
+        const cls = diff < 0 ? "good" : diff > 0 ? "bad" : "";
+        const arrow = diff < 0 ? "▼" : diff > 0 ? "▲" : "→";
+        tile.appendChild(h("div", { class: `delta ${cls}` }, `${arrow} ${fmt(Math.abs(diff), 1)}kg（${mmdd(prev.date)}比）`));
+      } else {
+        tile.appendChild(h("div", { class: "delta" }, `${mmdd(sm.latest_weight.date)} 時点`));
+      }
+    } else {
+      tile.appendChild(h("div", { class: "value" }, "—"));
+      tile.appendChild(h("div", { class: "delta" }, "未記録"));
+    }
+    tiles.appendChild(tile);
+  }
+
+  {
+    const tile = h("div", { class: "tile" }, h("div", { class: "label" }, "目標体重まで"));
+    if (goals.target_weight_kg !== undefined && sm.latest_weight) {
+      const remain = sm.latest_weight.weight_kg - goals.target_weight_kg;
+      tile.appendChild(h("div", { class: "value" },
+        remain <= 0 ? "達成 🎉" : `あと ${fmt(remain, 1)}`,
+        remain <= 0 ? null : h("small", {}, "kg")));
+      tile.appendChild(h("div", { class: "delta" }, `目標 ${fmt(goals.target_weight_kg, 1)}kg`));
+    } else {
+      tile.appendChild(h("div", { class: "value" }, "—"));
+      tile.appendChild(h("div", { class: "delta" }, "set_goals で目標体重を設定"));
+    }
+    tiles.appendChild(tile);
+  }
+
+  {
+    const tile = h("div", { class: "tile" }, h("div", { class: "label" }, "今日の摂取カロリー"));
+    const kcal = todayRow.calories_in;
+    tile.appendChild(h("div", { class: "value" }, fmt(kcal ?? 0), h("small", {}, "kcal")));
+    if (goals.daily_calorie_target !== undefined) {
+      const ratio = (kcal ?? 0) / goals.daily_calorie_target;
+      const bar = h("i");
+      bar.style.width = Math.min(100, ratio * 100) + "%";
+      if (ratio > 1) bar.className = "over";
+      tile.appendChild(h("div", { class: "meter" }, bar));
+      tile.appendChild(h("div", { class: `delta ${ratio > 1 ? "bad" : ""}` },
+        ratio > 1
+          ? `目標を ${fmt((kcal ?? 0) - goals.daily_calorie_target)}kcal 超過`
+          : `目標 ${fmt(goals.daily_calorie_target)}kcal / 残り ${fmt(goals.daily_calorie_target - (kcal ?? 0))}kcal`));
+    } else {
+      tile.appendChild(h("div", { class: "delta" }, "目標未設定"));
+    }
+    tiles.appendChild(tile);
+  }
+
+  {
+    const tile = h("div", { class: "tile" }, h("div", { class: "label" }, "今日のたんぱく質"));
+    tile.appendChild(h("div", { class: "value" }, fmt(todayRow.protein_g ?? 0), h("small", {}, "g")));
+    tile.appendChild(h("div", { class: "delta" },
+      goals.daily_protein_target_g !== undefined
+        ? `目標 ${fmt(goals.daily_protein_target_g)}g`
+        : "目標未設定"));
+    tiles.appendChild(tile);
+  }
+
+  return tiles;
+}
+
+/* ---------- today's entries ---------- */
+const MEAL_LABELS = { breakfast: "朝食", lunch: "昼食", dinner: "夕食", snack: "間食", other: "" };
+
+function todayCard() {
+  const sm = SUMMARY;
+  const card = h("div", { class: "card" }, h("h2", {}, `今日の記録（${sm.today}）`));
+  if (sm.today_meals.length === 0 && sm.today_exercises.length === 0) {
+    card.appendChild(h("div", { class: "empty" }, "今日はまだ記録がありません。AIとのセッションで食事や運動を伝えると記録されます。"));
+    return card;
+  }
+  const ul = h("ul", { class: "entries" });
+  for (const m of sm.today_meals) {
+    const label = MEAL_LABELS[m.meal_type] ?? "";
+    ul.appendChild(h("li", {},
+      h("span", { class: "n" }, m.name, " ", h("span", { class: "meta" }, label)),
+      h("span", { class: "kcal" }, `${fmt(m.calories)} kcal`)));
+  }
+  for (const e of sm.today_exercises) {
+    ul.appendChild(h("li", {},
+      h("span", { class: "n" }, "🏃 ", e.name,
+        e.duration_min ? h("span", { class: "meta" }, ` ${fmt(e.duration_min)}分`) : null),
+      h("span", { class: "kcal" }, e.calories_burned !== null ? `−${fmt(e.calories_burned)} kcal` : "")));
+  }
+  card.appendChild(ul);
+  return card;
+}
+
+/* ---------- data table ---------- */
+function dataTable() {
+  const sm = SUMMARY;
+  const wByDate = new Map(sm.weights.map((r) => [r.date, r]));
+  const table = h("table", { class: "data" });
+  table.appendChild(h("thead", {}, h("tr", {},
+    ...["日付", "体重 (kg)", "摂取 (kcal)", "消費 (kcal)", "P (g)", "F (g)", "C (g)"].map((t) => h("th", {}, t)))));
+  const tbody = h("tbody");
+  for (let i = sm.daily.length - 1; i >= 0; i--) {
+    const d = sm.daily[i];
+    const wRow = wByDate.get(d.date);
+    if (!wRow && d.calories_in === null && d.calories_burned === null) continue;
+    tbody.appendChild(h("tr", {},
+      h("td", {}, d.date),
+      h("td", {}, wRow ? fmt(wRow.weight_kg, 1) : "—"),
+      h("td", {}, fmt(d.calories_in)),
+      h("td", {}, fmt(d.calories_burned)),
+      h("td", {}, fmt(d.protein_g)),
+      h("td", {}, fmt(d.fat_g)),
+      h("td", {}, fmt(d.carbs_g))));
+  }
+  table.appendChild(tbody);
+  return h("details", { class: "table-view" }, h("summary", {}, "データ表を表示"), table);
+}
+
+/* ---------- page ---------- */
+function chartCard(title, desc, renderFn, legendItems) {
+  const card = h("div", { class: "card" }, h("h2", {}, title), h("p", { class: "desc" }, desc));
+  if (legendItems) {
+    const legend = h("div", { class: "legend" });
+    for (const item of legendItems) {
+      const sw = h("span", { class: "swatch" });
+      sw.style.background = cssVar(item.varName);
+      legend.appendChild(h("span", { class: "key" }, sw, item.label));
+    }
+    card.appendChild(legend);
+  }
+  const container = h("div", { class: "chart" });
+  card.appendChild(container);
+  requestAnimationFrame(() => renderFn(container, card));
+  return card;
+}
+
+function render() {
+  clear(app);
+  const sm = SUMMARY;
+
+  app.appendChild(h("header", { class: "top" },
+    h("h1", {}, "ダイエットダッシュボード"),
+    h("span", { class: "sub" }, `今日: ${sm.today} ・ 直近${sm.days}日`)));
+
+  const filters = h("div", { class: "filters", role: "group", "aria-label": "表示期間" });
+  for (const d of [7, 14, 30, 90]) {
+    filters.appendChild(h("button", {
+      "aria-pressed": String(d === DAYS),
+      onclick: () => { DAYS = d; localStorage.setItem("diet_days", String(d)); load(); },
+    }, `${d}日`));
+  }
+  app.appendChild(filters);
+
+  app.appendChild(kpiTiles());
+  app.appendChild(chartCard("体重の推移", "記録した日の体重をつないでいます。", weightChart));
+  app.appendChild(chartCard("日別の摂取カロリー", "1日の合計摂取カロリーです。", calorieChart));
+  app.appendChild(chartCard("PFCバランス", "たんぱく質・脂質・炭水化物の1日合計 (g) です。", pfcChart,
+    PFC.map((p) => ({ varName: p.varName, label: p.label }))));
+  app.appendChild(dataTable());
+  app.appendChild(todayCard());
+
+  app.appendChild(h("footer", {},
+    "MCPエンドポイント: ", h("code", {}, location.origin + "/mcp"),
+    "（AIセッションから記録するとここに反映されます）"));
+}
+
+let resizeTimer;
+addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { if (SUMMARY) render(); }, 150);
+});
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (SUMMARY) render(); });
+
+load();
+</script>
+</body>
+</html>
