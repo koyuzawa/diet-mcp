@@ -11,8 +11,7 @@
     {
       "binding": "DB",
       "database_name": "diet-mcp",
-      // `npm run db:create` (wrangler d1 create diet-mcp) の出力の database_id に置き換える
-      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
+      "database_id": "af80187f-9779-4895-b85a-cab42c40510a",
       "migrations_dir": "migrations"
     }
   ],
