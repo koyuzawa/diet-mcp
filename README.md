@@ -77,6 +77,21 @@ claude mcp add --transport http diet https://<あなたのWorker>.workers.dev/mc
 
 ## ローカル開発
 
+### VS Code Dev Container（いちばん簡単）
+
+VS Codeに [Dev Containers拡張](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) と Docker を入れて、このフォルダを開き
+「**Reopen in Container**」を選ぶだけです。自動で
+
+1. 依存のインストール（`npm install`）
+2. ローカルD1へのマイグレーション適用
+3. 開発サーバーの起動（http://localhost:8787 でダッシュボードが開ける）
+
+まで行われます。Node.jsのローカルインストールは不要です。
+デプロイするときはコンテナ内のターミナルで `npx wrangler login` からセットアップ手順の続きを実行してください
+（サーバーのログは `/tmp/wrangler-dev.log` にあります）。
+
+### 手動で
+
 ```bash
 npm run db:migrate:local   # ローカルD1にマイグレーション適用
 npm run dev                # http://localhost:8787

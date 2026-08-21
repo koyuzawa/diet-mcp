@@ -1,0 +1,28 @@
+{
+  "name": "diet-mcp",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:22",
+  // 8787: wrangler dev（ダッシュボード） / 8976: wrangler login のOAuthコールバック
+  "forwardPorts": [8787, 8976],
+  "portsAttributes": {
+    "8787": { "label": "ダッシュボード (wrangler dev)", "onAutoForward": "notify" },
+    "8976": { "label": "wrangler login" }
+  },
+  // 作成時: 依存インストール + ローカルD1にテーブル作成
+  "postCreateCommand": "npm install && npx wrangler d1 migrations apply diet-mcp --local",
+  // 起動時: 開発サーバーを自動起動（http://localhost:8787 がすぐ開ける）
+  "postStartCommand": "bash -c 'nohup npx wrangler dev --port 8787 > /tmp/wrangler-dev.log 2>&1 &'",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "esbenp.prettier-vscode"
+      ],
+      "settings": {
+        "typescript.tsdk": "node_modules/typescript/lib",
+        "files.associations": {
+          "wrangler.jsonc": "jsonc"
+        }
+      }
+    }
+  },
+  "remoteUser": "node"
+}
