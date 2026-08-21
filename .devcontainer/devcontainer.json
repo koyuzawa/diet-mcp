@@ -8,7 +8,7 @@
     "8976": { "label": "wrangler login" }
   },
   // 作成時: 依存インストール + ローカルD1にテーブル作成
-  "postCreateCommand": "npm install && npx wrangler d1 migrations apply diet-mcp --local",
+  "postCreateCommand": "npm install && echo y | npx wrangler d1 migrations apply diet-mcp --local",
   // 起動時: 開発サーバーを自動起動（http://localhost:8787 がすぐ開ける）
   "postStartCommand": "bash -c 'nohup npx wrangler dev --port 8787 > /tmp/wrangler-dev.log 2>&1 &'",
   "customizations": {
