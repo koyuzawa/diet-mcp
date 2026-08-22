@@ -20,6 +20,7 @@
     --s2: #eb6834;   /* series 2: orange */
     --s3: #1baf7a;   /* series 3: aqua */
     --good-text: #006300;
+    --good-fill: #0ca30c;
     --bad: #d03b3b;
     --meter-track: #cde2fb;
   }
@@ -38,6 +39,7 @@
       --s2: #d95926;
       --s3: #199e70;
       --good-text: #0ca30c;
+      --good-fill: #0ca30c;
       --bad: #d03b3b;
       --meter-track: #184f95;
     }
@@ -120,6 +122,21 @@
   ul.entries .n { color: var(--ink); }
   ul.entries .meta { color: var(--muted); font-size: 12px; }
   ul.entries .kcal { font-variant-numeric: tabular-nums; color: var(--ink-2); white-space: nowrap; }
+
+  .habit-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--grid); }
+  .habit-row:last-child { border-bottom: none; }
+  .habit-head { flex: 0 0 130px; min-width: 0; }
+  .habit-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .habit-streak { color: var(--muted); font-size: 12px; }
+  .habit-cells { display: flex; gap: 3px; overflow-x: auto; padding: 2px 0; }
+  .hcell {
+    flex: none; width: 18px; height: 18px; border-radius: 4px;
+    border: 1px solid var(--grid); background: transparent;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; line-height: 1; color: #fff;
+  }
+  .hcell.done { background: var(--good-fill); border-color: transparent; }
+  .hcell.today { box-shadow: 0 0 0 2px var(--baseline); }
 
   .auth { max-width: 420px; margin: 60px auto; text-align: center; }
   .auth input { font: inherit; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); width: 100%; margin: 12px 0; }
@@ -673,6 +690,44 @@ function todayCard() {
   return card;
 }
 
+/* ---------- habits ---------- */
+function habitsCard() {
+  const sm = SUMMARY;
+  const card = h("div", { class: "card" },
+    h("h2", {}, "習慣"),
+    h("p", { class: "desc" }, "チェック式の習慣トラッカーです。緑=達成した日。"));
+  if (!sm.habits || sm.habits.length === 0) {
+    card.appendChild(h("div", { class: "empty" },
+      "まだ習慣がありません。AIとのセッションで「運動を習慣として記録して」と伝えると追跡が始まります。"));
+    return card;
+  }
+  const shownDates = sm.daily.slice(-28).map((d) => d.date);
+  for (const habit of sm.habits) {
+    const doneSet = new Set(habit.dates);
+    const doneInRange = habit.dates.length;
+    const head = h("div", { class: "habit-head" },
+      h("div", { class: "habit-name" }, habit.name),
+      h("div", { class: "habit-streak" },
+        habit.streak > 0 ? `🔥 ${habit.streak}日連続` : `直近${sm.days}日で${doneInRange}回`));
+    const cells = h("div", { class: "habit-cells" });
+    for (const date of shownDates) {
+      const done = doneSet.has(date);
+      const isToday = date === sm.today;
+      const cell = h("span", {
+        class: `hcell${done ? " done" : ""}${isToday ? " today" : ""}`,
+        title: `${habit.name} ${date} ${done ? "達成" : "未達成"}`,
+        "aria-label": `${habit.name} ${date} ${done ? "達成" : "未達成"}`,
+      });
+      if (done) cell.textContent = "✓";
+      cells.appendChild(cell);
+    }
+    card.appendChild(h("div", { class: "habit-row" }, head, cells));
+  }
+  card.appendChild(h("p", { class: "desc", style: "margin:8px 0 0" },
+    `表示は直近${shownDates.length}日分です。`));
+  return card;
+}
+
 /* ---------- data table ---------- */
 function dataTable() {
   const sm = SUMMARY;
@@ -738,6 +793,7 @@ function render() {
   app.appendChild(chartCard("日別の摂取カロリー", "1日の合計摂取カロリーです。", calorieChart));
   app.appendChild(chartCard("PFCバランス", "たんぱく質・脂質・炭水化物の1日合計 (g) です。", pfcChart,
     PFC.map((p) => ({ varName: p.varName, label: p.label }))));
+  app.appendChild(habitsCard());
   app.appendChild(dataTable());
   app.appendChild(todayCard());
 

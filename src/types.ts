@@ -51,6 +51,16 @@ export interface DayTotals {
   meal_count: number;
 }
 
+export interface HabitSummary {
+  id: number;
+  name: string;
+  /** 連続達成日数（今日が未達成でも昨日までの連続を数える） */
+  streak: number;
+  done_today: boolean;
+  /** サマリー期間内で達成した日付 */
+  dates: string[];
+}
+
 export interface Summary {
   today: string;
   days: number;
@@ -60,4 +70,5 @@ export interface Summary {
   daily: DayTotals[];
   today_meals: MealRow[];
   today_exercises: ExerciseRow[];
+  habits: HabitSummary[];
 }

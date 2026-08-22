@@ -3,6 +3,7 @@ import type {
   Env,
   ExerciseRow,
   Goals,
+  HabitSummary,
   MealRow,
   Summary,
   WeightRow,
@@ -136,6 +137,91 @@ export async function getGoals(db: D1Database): Promise<Goals> {
   return goals as Goals;
 }
 
+/** 習慣を達成として記録（done=falseで取り消し）。未知の習慣名は自動作成 */
+export async function logHabit(
+  db: D1Database,
+  name: string,
+  date: string,
+  done: boolean,
+): Promise<{ habit_id: number; created: boolean }> {
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error("習慣名(name)は必須です");
+  let habit = await db
+    .prepare(`SELECT id FROM habits WHERE name = ?1`)
+    .bind(trimmed)
+    .first<{ id: number }>();
+  let created = false;
+  if (!habit) {
+    if (!done) return { habit_id: 0, created: false };
+    const res = await db.prepare(`INSERT INTO habits (name) VALUES (?1)`).bind(trimmed).run();
+    habit = { id: Number(res.meta.last_row_id) };
+    created = true;
+  } else {
+    // 記録があったらアーカイブ解除
+    await db.prepare(`UPDATE habits SET archived = 0 WHERE id = ?1`).bind(habit.id).run();
+  }
+  if (done) {
+    await db
+      .prepare(`INSERT OR IGNORE INTO habit_logs (habit_id, date) VALUES (?1, ?2)`)
+      .bind(habit.id, date)
+      .run();
+  } else {
+    await db
+      .prepare(`DELETE FROM habit_logs WHERE habit_id = ?1 AND date = ?2`)
+      .bind(habit.id, date)
+      .run();
+  }
+  return { habit_id: habit.id, created };
+}
+
+/** 習慣の追跡をやめる（過去の記録は残る） */
+export async function archiveHabit(db: D1Database, name: string): Promise<boolean> {
+  const res = await db
+    .prepare(`UPDATE habits SET archived = 1 WHERE name = ?1`)
+    .bind(name.trim())
+    .run();
+  return (res.meta.changes ?? 0) > 0;
+}
+
+async function getHabitSummaries(
+  db: D1Database,
+  todayStr: string,
+  rangeStart: string,
+): Promise<HabitSummary[]> {
+  const habits = await db
+    .prepare(`SELECT id, name FROM habits WHERE archived = 0 ORDER BY id`)
+    .all<{ id: number; name: string }>();
+  if (habits.results.length === 0) return [];
+  // ストリーク計算のため過去1年分のログを取得
+  const logs = await db
+    .prepare(`SELECT habit_id, date FROM habit_logs WHERE date >= ?1 AND date <= ?2`)
+    .bind(addDays(todayStr, -365), todayStr)
+    .all<{ habit_id: number; date: string }>();
+  const byHabit = new Map<number, Set<string>>();
+  for (const row of logs.results) {
+    let set = byHabit.get(row.habit_id);
+    if (!set) byHabit.set(row.habit_id, (set = new Set()));
+    set.add(row.date);
+  }
+  return habits.results.map((habit) => {
+    const done = byHabit.get(habit.id) ?? new Set<string>();
+    // 今日が未達成でも昨日までの連続を数える
+    let cursor = done.has(todayStr) ? todayStr : addDays(todayStr, -1);
+    let streak = 0;
+    while (done.has(cursor)) {
+      streak++;
+      cursor = addDays(cursor, -1);
+    }
+    return {
+      id: habit.id,
+      name: habit.name,
+      streak,
+      done_today: done.has(todayStr),
+      dates: [...done].filter((d) => d >= rangeStart).sort(),
+    };
+  });
+}
+
 export async function getSummary(
   db: D1Database,
   todayStr: string,
@@ -143,7 +229,7 @@ export async function getSummary(
 ): Promise<Summary> {
   const start = addDays(todayStr, -(days - 1));
 
-  const [goals, latest, weights, mealTotals, exTotals, todayMeals, todayExercises] =
+  const [goals, latest, weights, mealTotals, exTotals, todayMeals, todayExercises, habits] =
     await Promise.all([
       getGoals(db),
       db
@@ -194,6 +280,7 @@ export async function getSummary(
         )
         .bind(todayStr)
         .all<ExerciseRow>(),
+      getHabitSummaries(db, todayStr, start),
     ]);
 
   const mealsByDate = new Map(mealTotals.results.map((r) => [r.date, r]));
@@ -224,6 +311,7 @@ export async function getSummary(
     daily,
     today_meals: todayMeals.results,
     today_exercises: todayExercises.results,
+    habits,
   };
 }
 
