@@ -1,7 +1,6 @@
 import {
   deleteEntry,
   getSummary,
-  insertExercise,
   insertMeal,
   listDay,
   logHabit,
@@ -17,10 +16,10 @@ const SUPPORTED_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
 const LATEST_PROTOCOL_VERSION = SUPPORTED_PROTOCOL_VERSIONS[0];
 
 const INSTRUCTIONS = [
-  "ダイエット（体重・食事・運動・習慣）記録用のMCPサーバーです。",
-  "ユーザーがダイエットセッション中に体重・食べたもの・運動を口にしたら、対応するツールでこまめに記録してください。",
+  "ダイエット（体重・食事・習慣）記録用のMCPサーバーです。",
+  "ユーザーがダイエットセッション中に体重・食べたものを口にしたら、対応するツールでこまめに記録してください。",
   "食事はカロリーが分からなければ一般的な値を推定して calories に入れ、note にその旨を書いてください。",
-  "習慣トラッカーもあります（共通の固定セット。現在は「筋トレ」のみ）。ユーザーが筋トレをしたと言ったら、log_exercise（内容の記録）と log_habit（習慣のチェック）の両方を呼んでください。",
+  "習慣トラッカーもあります（共通の固定セット。現在は「筋トレ」のみ）。ユーザーが筋トレをしたと言ったら log_habit でチェックしてください。",
   "記録はダッシュボード（このサーバーのルートURL）に即時反映されます。",
 ].join("\n");
 
@@ -137,36 +136,9 @@ const TOOLS: ToolDef[] = [
     },
   },
   {
-    name: "log_exercise",
-    description: "運動を記録する。消費カロリーが分かれば calories_burned に入れる（推定可）。",
-    inputSchema: {
-      type: "object",
-      properties: {
-        date: dateProp,
-        name: { type: "string", description: "運動の内容（例: ウォーキング30分）" },
-        duration_min: { type: "number", description: "時間 (分)（任意）" },
-        calories_burned: { type: "number", description: "消費カロリー (kcal)（任意）" },
-        note: { type: "string", description: "メモ（任意）" },
-      },
-      required: ["name"],
-    },
-    handler: async (env, args) => {
-      const date = normalizeDate(env, args.date);
-      const name = requireStr(args, "name");
-      const id = await insertExercise(env.DB, {
-        date,
-        name,
-        duration_min: num(args, "duration_min"),
-        calories_burned: num(args, "calories_burned"),
-        note: str(args, "note"),
-      });
-      return `${date} の運動「${name}」を記録しました (id: ${id})。`;
-    },
-  },
-  {
     name: "log_habit",
     description:
-      "習慣の達成をチェックする。習慣は共通の固定セットで、現在は「筋トレ」のみ。ユーザーが筋トレをしたと言ったら log_exercise とあわせて呼ぶ。done=false でチェックの取り消し。",
+      "習慣の達成をチェックする。習慣は共通の固定セットで、現在は「筋トレ」のみ。ユーザーが筋トレをしたと言ったら呼ぶ。done=false でチェックの取り消し。",
     inputSchema: {
       type: "object",
       properties: {
@@ -211,7 +183,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "get_summary",
     description:
-      "直近の記録のサマリーを取得する（体重推移・日別カロリー/PFC・目標・今日の食事と運動）。セッション開始時に呼んで状況を把握するとよい。",
+      "直近の記録のサマリーを取得する（体重推移・日別カロリー/PFC・目標・習慣・今日の食事）。セッション開始時に呼んで状況を把握するとよい。",
     inputSchema: {
       type: "object",
       properties: {
@@ -231,7 +203,7 @@ const TOOLS: ToolDef[] = [
   },
   {
     name: "list_day",
-    description: "指定日の記録（体重・食事・運動）をID付きで一覧する。修正・削除の前に呼ぶ。",
+    description: "指定日の記録（体重・食事）をID付きで一覧する。修正・削除の前に呼ぶ。",
     inputSchema: {
       type: "object",
       properties: { date: dateProp },
@@ -245,20 +217,20 @@ const TOOLS: ToolDef[] = [
   {
     name: "delete_entry",
     description:
-      "記録を削除する。食事・運動は list_day で確認した id を、体重は date を指定する。",
+      "記録を削除する。食事は list_day で確認した id を、体重は date を指定する。",
     inputSchema: {
       type: "object",
       properties: {
-        type: { type: "string", enum: ["meal", "exercise", "weight"] },
-        id: { type: "integer", description: "meal / exercise の削除対象ID" },
+        type: { type: "string", enum: ["meal", "weight"] },
+        id: { type: "integer", description: "meal の削除対象ID" },
         date: { ...dateProp, description: "weight の削除対象日 (YYYY-MM-DD)" },
       },
       required: ["type"],
     },
     handler: async (env, args) => {
       const type = requireStr(args, "type");
-      if (type !== "meal" && type !== "exercise" && type !== "weight") {
-        throw new Error("type は meal / exercise / weight のいずれかです");
+      if (type !== "meal" && type !== "weight") {
+        throw new Error("type は meal / weight のいずれかです");
       }
       const deleted = await deleteEntry(env.DB, type, {
         id: num(args, "id"),

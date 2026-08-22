@@ -26,15 +26,6 @@ export interface MealRow {
   note: string | null;
 }
 
-export interface ExerciseRow {
-  id: number;
-  date: string;
-  name: string;
-  duration_min: number | null;
-  calories_burned: number | null;
-  note: string | null;
-}
-
 export interface Goals {
   target_weight_kg?: number;
   daily_calorie_target?: number;
@@ -47,7 +38,6 @@ export interface DayTotals {
   protein_g: number | null;
   fat_g: number | null;
   carbs_g: number | null;
-  calories_burned: number | null;
   meal_count: number;
 }
 
@@ -69,6 +59,5 @@ export interface Summary {
   weights: WeightRow[];
   daily: DayTotals[];
   today_meals: MealRow[];
-  today_exercises: ExerciseRow[];
   habits: HabitSummary[];
 }

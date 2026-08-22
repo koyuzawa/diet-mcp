@@ -1,7 +1,6 @@
 import type {
   DayTotals,
   Env,
-  ExerciseRow,
   Goals,
   HabitSummary,
   MealRow,
@@ -83,32 +82,6 @@ export async function insertMeal(
       m.fat_g ?? null,
       m.carbs_g ?? null,
       m.note ?? null,
-    )
-    .run();
-  return Number(res.meta.last_row_id);
-}
-
-export async function insertExercise(
-  db: D1Database,
-  e: {
-    date: string;
-    name: string;
-    duration_min?: number;
-    calories_burned?: number;
-    note?: string;
-  },
-): Promise<number> {
-  const res = await db
-    .prepare(
-      `INSERT INTO exercises (date, name, duration_min, calories_burned, note)
-       VALUES (?1, ?2, ?3, ?4, ?5)`,
-    )
-    .bind(
-      e.date,
-      e.name,
-      e.duration_min ?? null,
-      e.calories_burned ?? null,
-      e.note ?? null,
     )
     .run();
   return Number(res.meta.last_row_id);
@@ -219,7 +192,7 @@ export async function getSummary(
 ): Promise<Summary> {
   const start = addDays(todayStr, -(days - 1));
 
-  const [goals, latest, weights, mealTotals, exTotals, todayMeals, todayExercises, habits] =
+  const [goals, latest, weights, mealTotals, todayMeals, habits] =
     await Promise.all([
       getGoals(db),
       db
@@ -251,43 +224,26 @@ export async function getSummary(
         }>(),
       db
         .prepare(
-          `SELECT date, SUM(calories_burned) AS calories_burned
-           FROM exercises WHERE date >= ?1 AND date <= ?2 GROUP BY date`,
-        )
-        .bind(start, todayStr)
-        .all<{ date: string; calories_burned: number | null }>(),
-      db
-        .prepare(
           `SELECT id, date, meal_type, name, calories, protein_g, fat_g, carbs_g, note
            FROM meals WHERE date = ?1 ORDER BY id`,
         )
         .bind(todayStr)
         .all<MealRow>(),
-      db
-        .prepare(
-          `SELECT id, date, name, duration_min, calories_burned, note
-           FROM exercises WHERE date = ?1 ORDER BY id`,
-        )
-        .bind(todayStr)
-        .all<ExerciseRow>(),
       getHabitSummaries(db, todayStr, start),
     ]);
 
   const mealsByDate = new Map(mealTotals.results.map((r) => [r.date, r]));
-  const exByDate = new Map(exTotals.results.map((r) => [r.date, r]));
 
   const daily: DayTotals[] = [];
   for (let i = 0; i < days; i++) {
     const date = addDays(start, i);
     const m = mealsByDate.get(date);
-    const e = exByDate.get(date);
     daily.push({
       date,
       calories_in: m?.calories_in ?? null,
       protein_g: m?.protein_g ?? null,
       fat_g: m?.fat_g ?? null,
       carbs_g: m?.carbs_g ?? null,
-      calories_burned: e?.calories_burned ?? null,
       meal_count: m?.meal_count ?? 0,
     });
   }
@@ -300,7 +256,6 @@ export async function getSummary(
     weights: weights.results,
     daily,
     today_meals: todayMeals.results,
-    today_exercises: todayExercises.results,
     habits,
   };
 }
@@ -308,8 +263,8 @@ export async function getSummary(
 export async function listDay(
   db: D1Database,
   date: string,
-): Promise<{ date: string; weight: WeightRow | null; meals: MealRow[]; exercises: ExerciseRow[] }> {
-  const [weight, meals, exercises] = await Promise.all([
+): Promise<{ date: string; weight: WeightRow | null; meals: MealRow[] }> {
+  const [weight, meals] = await Promise.all([
     db
       .prepare(`SELECT date, weight_kg, body_fat_pct, note FROM weights WHERE date = ?1`)
       .bind(date)
@@ -321,34 +276,23 @@ export async function listDay(
       )
       .bind(date)
       .all<MealRow>(),
-    db
-      .prepare(
-        `SELECT id, date, name, duration_min, calories_burned, note
-         FROM exercises WHERE date = ?1 ORDER BY id`,
-      )
-      .bind(date)
-      .all<ExerciseRow>(),
   ]);
   return {
     date,
     weight: weight ?? null,
     meals: meals.results,
-    exercises: exercises.results,
   };
 }
 
 export async function deleteEntry(
   db: D1Database,
-  type: "meal" | "exercise" | "weight",
+  type: "meal" | "weight",
   opts: { id?: number; date?: string },
 ): Promise<number> {
   let res: D1Result;
   if (type === "meal") {
     if (opts.id === undefined) throw new Error("mealの削除にはidが必要です");
     res = await db.prepare(`DELETE FROM meals WHERE id = ?1`).bind(opts.id).run();
-  } else if (type === "exercise") {
-    if (opts.id === undefined) throw new Error("exerciseの削除にはidが必要です");
-    res = await db.prepare(`DELETE FROM exercises WHERE id = ?1`).bind(opts.id).run();
   } else {
     if (!opts.date) throw new Error("weightの削除にはdateが必要です");
     res = await db.prepare(`DELETE FROM weights WHERE date = ?1`).bind(opts.date).run();
