@@ -698,7 +698,7 @@ function habitsCard() {
     h("p", { class: "desc" }, "チェック式の習慣トラッカーです。緑=達成した日。"));
   if (!sm.habits || sm.habits.length === 0) {
     card.appendChild(h("div", { class: "empty" },
-      "まだ習慣がありません。AIとのセッションで「運動を習慣として記録して」と伝えると追跡が始まります。"));
+      "追跡中の習慣がありません。マイグレーションが未適用の可能性があります。"));
     return card;
   }
   const shownDates = sm.daily.slice(-28).map((d) => d.date);

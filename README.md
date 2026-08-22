@@ -64,6 +64,7 @@ claude mcp add --transport http diet https://<あなたのWorker>.workers.dev/mc
 | `log_weight` | 体重（+体脂肪率）を記録。同じ日は上書き |
 | `log_meal` | 食事を記録（名前・kcal・PFC） |
 | `log_exercise` | 運動を記録（時間・消費kcal） |
+| `log_habit` | 習慣の達成をチェック（共通の固定セット。現在は「筋トレ」のみ。習慣の追加は `migrations/` で管理） |
 | `set_goals` | 目標体重・1日の摂取カロリー/たんぱく質目標を設定 |
 | `get_summary` | 直近N日のサマリー（体重推移・日別集計・今日の記録） |
 | `list_day` | 指定日の記録をID付きで一覧（修正・削除用） |

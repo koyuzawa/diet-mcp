@@ -1,5 +1,4 @@
 import {
-  archiveHabit,
   deleteEntry,
   getSummary,
   insertExercise,
@@ -21,7 +20,7 @@ const INSTRUCTIONS = [
   "ダイエット（体重・食事・運動・習慣）記録用のMCPサーバーです。",
   "ユーザーがダイエットセッション中に体重・食べたもの・運動を口にしたら、対応するツールでこまめに記録してください。",
   "食事はカロリーが分からなければ一般的な値を推定して calories に入れ、note にその旨を書いてください。",
-  "習慣トラッカーもあります。ユーザーが追跡中の習慣（get_summaryのhabitsに出ます。例:「運動」）を達成したと言ったら log_habit でチェックしてください。運動の場合は log_exercise（内容の記録）と log_habit（習慣のチェック）の両方を呼びます。",
+  "習慣トラッカーもあります（共通の固定セット。現在は「筋トレ」のみ）。ユーザーが筋トレをしたと言ったら、log_exercise（内容の記録）と log_habit（習慣のチェック）の両方を呼んでください。",
   "記録はダッシュボード（このサーバーのルートURL）に即時反映されます。",
 ].join("\n");
 
@@ -167,11 +166,11 @@ const TOOLS: ToolDef[] = [
   {
     name: "log_habit",
     description:
-      "習慣の達成をチェックする（例: 運動、散歩、禁酒）。初めての習慣名なら自動で追跡が始まる。done=false でチェックの取り消し。運動を達成した場合は log_exercise とあわせて呼ぶ。",
+      "習慣の達成をチェックする。習慣は共通の固定セットで、現在は「筋トレ」のみ。ユーザーが筋トレをしたと言ったら log_exercise とあわせて呼ぶ。done=false でチェックの取り消し。",
     inputSchema: {
       type: "object",
       properties: {
-        name: { type: "string", description: "習慣名（例: 運動）" },
+        name: { type: "string", enum: ["筋トレ"], description: "習慣名" },
         date: dateProp,
         done: { type: "boolean", description: "達成ならtrue（既定）。falseで取り消し" },
       },
@@ -181,29 +180,10 @@ const TOOLS: ToolDef[] = [
       const date = normalizeDate(env, args.date);
       const name = requireStr(args, "name");
       const done = args.done === undefined ? true : Boolean(args.done);
-      const res = await logHabit(env.DB, name, date, done);
-      if (!done) return `${date} の「${name}」のチェックを取り消しました。`;
-      return res.created
-        ? `習慣「${name}」の追跡を始めて、${date} を達成として記録しました。`
-        : `${date} の「${name}」を達成として記録しました。`;
-    },
-  },
-  {
-    name: "archive_habit",
-    description: "習慣の追跡をやめる（過去の記録は残る）。再開するには log_habit で記録すればよい。",
-    inputSchema: {
-      type: "object",
-      properties: {
-        name: { type: "string", description: "習慣名" },
-      },
-      required: ["name"],
-    },
-    handler: async (env, args) => {
-      const name = requireStr(args, "name");
-      const found = await archiveHabit(env.DB, name);
-      return found
-        ? `習慣「${name}」の追跡をやめました（過去の記録は残っています）。`
-        : `習慣「${name}」は見つかりませんでした。`;
+      await logHabit(env.DB, name, date, done);
+      return done
+        ? `${date} の「${name}」を達成として記録しました。`
+        : `${date} の「${name}」のチェックを取り消しました。`;
     },
   },
   {

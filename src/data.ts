@@ -137,28 +137,28 @@ export async function getGoals(db: D1Database): Promise<Goals> {
   return goals as Goals;
 }
 
-/** 習慣を達成として記録（done=falseで取り消し）。未知の習慣名は自動作成 */
+/**
+ * 習慣を達成として記録（done=falseで取り消し）。
+ * 習慣は共通の固定セット（migrationsで管理）。未知の名前はエラー。
+ */
 export async function logHabit(
   db: D1Database,
   name: string,
   date: string,
   done: boolean,
-): Promise<{ habit_id: number; created: boolean }> {
+): Promise<void> {
   const trimmed = name.trim();
   if (!trimmed) throw new Error("習慣名(name)は必須です");
-  let habit = await db
-    .prepare(`SELECT id FROM habits WHERE name = ?1`)
+  const habit = await db
+    .prepare(`SELECT id FROM habits WHERE name = ?1 AND archived = 0`)
     .bind(trimmed)
     .first<{ id: number }>();
-  let created = false;
   if (!habit) {
-    if (!done) return { habit_id: 0, created: false };
-    const res = await db.prepare(`INSERT INTO habits (name) VALUES (?1)`).bind(trimmed).run();
-    habit = { id: Number(res.meta.last_row_id) };
-    created = true;
-  } else {
-    // 記録があったらアーカイブ解除
-    await db.prepare(`UPDATE habits SET archived = 0 WHERE id = ?1`).bind(habit.id).run();
+    const { results } = await db
+      .prepare(`SELECT name FROM habits WHERE archived = 0 ORDER BY id`)
+      .all<{ name: string }>();
+    const available = results.map((r) => `「${r.name}」`).join("、") || "（なし）";
+    throw new Error(`習慣「${trimmed}」は追跡対象ではありません。記録できる習慣: ${available}`);
   }
   if (done) {
     await db
@@ -171,16 +171,6 @@ export async function logHabit(
       .bind(habit.id, date)
       .run();
   }
-  return { habit_id: habit.id, created };
-}
-
-/** 習慣の追跡をやめる（過去の記録は残る） */
-export async function archiveHabit(db: D1Database, name: string): Promise<boolean> {
-  const res = await db
-    .prepare(`UPDATE habits SET archived = 1 WHERE name = ?1`)
-    .bind(name.trim())
-    .run();
-  return (res.meta.changes ?? 0) > 0;
 }
 
 async function getHabitSummaries(
