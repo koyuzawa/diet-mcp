@@ -398,7 +398,7 @@ export async function getRanking(
 ): Promise<Ranking> {
   const start = addDays(todayStr, -(days - 1));
 
-  const [users, weightRows, mealDays, calorieTargets, kintore] = await Promise.all([
+  const [users, weightRows, mealDays, calorieTargets, kintore, lastRecords] = await Promise.all([
     listUsers(db),
     db
       .prepare(
@@ -425,6 +425,16 @@ export async function getRanking(
       )
       .bind(addDays(todayStr, -365), todayStr)
       .all<{ user_id: number; date: string }>(),
+    db
+      .prepare(
+        `SELECT user_id, MAX(date) AS last_date FROM (
+           SELECT user_id, date FROM weights
+           UNION ALL SELECT user_id, date FROM meals
+           UNION ALL SELECT user_id, date FROM habit_logs
+         ) WHERE date <= ?1 GROUP BY user_id`,
+      )
+      .bind(todayStr)
+      .all<{ user_id: number; last_date: string }>(),
   ]);
 
   const weightsByUser = new Map<number, { date: string; weight_kg: number }[]>();
@@ -446,6 +456,9 @@ export async function getRanking(
     if (!set) kintoreByUser.set(row.user_id, (set = new Set()));
     set.add(row.date);
   }
+  const lastByUser = new Map(lastRecords.results.map((r) => [r.user_id, r.last_date]));
+  const dayDiff = (from: string, to: string) =>
+    Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
 
   const entries: RankingEntry[] = users.map((user) => {
     const weights = weightsByUser.get(user.id) ?? [];
@@ -481,6 +494,11 @@ export async function getRanking(
       calorie_adherence_pct: adherence === null ? null : Math.round(adherence),
       kintore_count: kintoreInRange,
       kintore_streak: calcStreak(kintoreSet, todayStr),
+      last_record_date: lastByUser.get(user.id) ?? null,
+      days_since_record:
+        lastByUser.get(user.id) !== undefined
+          ? dayDiff(lastByUser.get(user.id) as string, todayStr)
+          : null,
     };
   });
 

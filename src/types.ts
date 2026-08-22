@@ -27,6 +27,10 @@ export interface RankingEntry {
   /** 筋トレ: 期間内の回数と現在の連続日数 */
   kintore_count: number;
   kintore_streak: number;
+  /** 最終記録日（体重・食事・習慣のいずれか）。一度も記録がなければnull */
+  last_record_date: string | null;
+  /** 最終記録からの経過日数（0=今日記録済み）。一度も記録がなければnull */
+  days_since_record: number | null;
 }
 
 export interface Ranking {

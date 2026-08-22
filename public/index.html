@@ -149,6 +149,13 @@
   table.rank tr.me td { background: color-mix(in srgb, var(--s1) 8%, transparent); }
   table.rank tr.me .who::after { content: "（あなた）"; color: var(--muted); font-size: 11px; }
 
+  .shame-row { display: flex; align-items: baseline; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--grid); }
+  .shame-row:last-child { border-bottom: none; }
+  .shame-row .emoji { font-size: 20px; }
+  .shame-row .who { font-weight: 600; }
+  .shame-row .status { color: var(--muted); font-size: 13px; }
+  .shame-row.bad .status { color: var(--bad); font-weight: 600; }
+
   .auth { max-width: 420px; margin: 60px auto; text-align: center; }
   .auth input { font: inherit; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); width: 100%; margin: 12px 0; }
   .auth button { font: inherit; padding: 8px 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); cursor: pointer; }
@@ -795,16 +802,52 @@ function rankingCard() {
       : h("div", { class: "empty" }, "カロリー目標を設定したユーザーがいません")));
 
   const byKintore = rk.entries
-    .slice()
+    .filter((e) => e.kintore_count > 0)
     .sort((a, b) => b.kintore_count - a.kintore_count || b.kintore_streak - a.kintore_streak);
   grid.appendChild(h("div", { class: "rank-block" },
     h("h3", {}, "筋トレ"),
-    rankTable(byKintore, meId, (e) => ({
-      main: `${fmt(e.kintore_count)}回`,
-      sub: e.kintore_streak > 0 ? `🔥${e.kintore_streak}日` : "",
-    }))));
+    byKintore.length
+      ? rankTable(byKintore, meId, (e) => ({
+          main: `${fmt(e.kintore_count)}回`,
+          sub: e.kintore_streak > 0 ? `🔥${e.kintore_streak}日` : "",
+        }))
+      : h("div", { class: "empty" }, "この期間に筋トレをした人がいません😴")));
 
   card.appendChild(grid);
+  return card;
+}
+
+/* ---------- slacker watch ---------- */
+function slackerCard() {
+  const rk = RANKING;
+  if (!rk || rk.entries.length <= 1) return null;
+  const card = h("div", { class: "card" },
+    h("h2", {}, "サボり監視 👀"),
+    h("p", { class: "desc" }, "今日まだ何も記録していないメンバーです。"));
+  const slackers = rk.entries
+    .filter((e) => e.days_since_record === null || e.days_since_record >= 1)
+    .sort((a, b) => (b.days_since_record ?? 9999) - (a.days_since_record ?? 9999));
+  if (slackers.length === 0) {
+    card.appendChild(h("div", { class: "empty" }, "🎉 全員今日も記録済み。えらい!"));
+    return card;
+  }
+  for (const e of slackers) {
+    const days = e.days_since_record;
+    let emoji, status, bad = false;
+    if (days === null) {
+      emoji = "👻"; status = "一度も記録なし"; bad = true;
+    } else if (days === 1) {
+      emoji = "🤔"; status = "今日はまだ記録なし（昨日は記録あり）";
+    } else {
+      emoji = days >= 7 ? "💀" : "😴";
+      status = `${fmt(days)}日間サボり中（最終記録: ${mmdd(e.last_record_date)}）`;
+      bad = true;
+    }
+    card.appendChild(h("div", { class: `shame-row${bad ? " bad" : ""}` },
+      h("span", { class: "emoji" }, emoji),
+      h("span", { class: "who" }, e.name),
+      h("span", { class: "status" }, status)));
+  }
   return card;
 }
 
@@ -874,6 +917,8 @@ function render() {
     PFC.map((p) => ({ varName: p.varName, label: p.label }))));
   app.appendChild(habitsCard());
   app.appendChild(rankingCard());
+  const shame = slackerCard();
+  if (shame) app.appendChild(shame);
   app.appendChild(dataTable());
   app.appendChild(todayCard());
 
