@@ -1,9 +1,12 @@
 import type {
+  AuthUser,
   DayTotals,
   Env,
   Goals,
   HabitSummary,
   MealRow,
+  Ranking,
+  RankingEntry,
   Summary,
   WeightRow,
 } from "./types";
@@ -37,26 +40,85 @@ function addDays(date: string, delta: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+/* ---------- ユーザー ---------- */
+
+export async function findUserByToken(
+  db: D1Database,
+  token: string,
+): Promise<AuthUser | null> {
+  const row = await db
+    .prepare(`SELECT id, name FROM users WHERE token = ?1`)
+    .bind(token)
+    .first<{ id: number; name: string }>();
+  return row ? { id: row.id, name: row.name, admin: false } : null;
+}
+
+export async function getAdminUser(db: D1Database): Promise<AuthUser> {
+  const row = await db
+    .prepare(`SELECT id, name FROM users WHERE id = 1`)
+    .first<{ id: number; name: string }>();
+  return { id: 1, name: row?.name ?? "オーナー", admin: true };
+}
+
+export async function createUser(
+  db: D1Database,
+  name: string,
+): Promise<{ id: number; token: string }> {
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error("名前(name)は必須です");
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  const token = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+  const res = await db
+    .prepare(`INSERT INTO users (name, token) VALUES (?1, ?2)`)
+    .bind(trimmed, token)
+    .run();
+  return { id: Number(res.meta.last_row_id), token };
+}
+
+export async function renameUser(
+  db: D1Database,
+  userId: number,
+  name: string,
+): Promise<void> {
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error("名前(name)は必須です");
+  await db.prepare(`UPDATE users SET name = ?1 WHERE id = ?2`).bind(trimmed, userId).run();
+}
+
+export async function listUsers(
+  db: D1Database,
+): Promise<{ id: number; name: string; created_at: string }[]> {
+  const { results } = await db
+    .prepare(`SELECT id, name, created_at FROM users ORDER BY id`)
+    .all<{ id: number; name: string; created_at: string }>();
+  return results;
+}
+
+/* ---------- 記録 ---------- */
+
 export async function upsertWeight(
   db: D1Database,
+  userId: number,
   w: { date: string; weight_kg: number; body_fat_pct?: number; note?: string },
 ): Promise<void> {
   await db
     .prepare(
-      `INSERT INTO weights (date, weight_kg, body_fat_pct, note)
-       VALUES (?1, ?2, ?3, ?4)
-       ON CONFLICT(date) DO UPDATE SET
+      `INSERT INTO weights (user_id, date, weight_kg, body_fat_pct, note)
+       VALUES (?1, ?2, ?3, ?4, ?5)
+       ON CONFLICT(user_id, date) DO UPDATE SET
          weight_kg = excluded.weight_kg,
          body_fat_pct = COALESCE(excluded.body_fat_pct, weights.body_fat_pct),
          note = COALESCE(excluded.note, weights.note),
          updated_at = datetime('now')`,
     )
-    .bind(w.date, w.weight_kg, w.body_fat_pct ?? null, w.note ?? null)
+    .bind(userId, w.date, w.weight_kg, w.body_fat_pct ?? null, w.note ?? null)
     .run();
 }
 
 export async function insertMeal(
   db: D1Database,
+  userId: number,
   m: {
     date: string;
     meal_type: string;
@@ -70,10 +132,11 @@ export async function insertMeal(
 ): Promise<number> {
   const res = await db
     .prepare(
-      `INSERT INTO meals (date, meal_type, name, calories, protein_g, fat_g, carbs_g, note)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
+      `INSERT INTO meals (user_id, date, meal_type, name, calories, protein_g, fat_g, carbs_g, note)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
     )
     .bind(
+      userId,
       m.date,
       m.meal_type,
       m.name,
@@ -87,35 +150,39 @@ export async function insertMeal(
   return Number(res.meta.last_row_id);
 }
 
-export async function setGoals(db: D1Database, goals: Goals): Promise<Goals> {
+export async function setGoals(
+  db: D1Database,
+  userId: number,
+  goals: Goals,
+): Promise<Goals> {
   const stmt = db.prepare(
-    `INSERT INTO goals (key, value) VALUES (?1, ?2)
-     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
+    `INSERT INTO goals (user_id, key, value) VALUES (?1, ?2, ?3)
+     ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
   );
   const entries = Object.entries(goals).filter(
     ([, v]) => typeof v === "number" && Number.isFinite(v),
   );
   if (entries.length > 0) {
-    await db.batch(entries.map(([k, v]) => stmt.bind(k, v)));
+    await db.batch(entries.map(([k, v]) => stmt.bind(userId, k, v)));
   }
-  return getGoals(db);
+  return getGoals(db, userId);
 }
 
-export async function getGoals(db: D1Database): Promise<Goals> {
+export async function getGoals(db: D1Database, userId: number): Promise<Goals> {
   const { results } = await db
-    .prepare(`SELECT key, value FROM goals`)
+    .prepare(`SELECT key, value FROM goals WHERE user_id = ?1`)
+    .bind(userId)
     .all<{ key: string; value: number }>();
   const goals: Record<string, number> = {};
   for (const row of results) goals[row.key] = row.value;
   return goals as Goals;
 }
 
-/**
- * 習慣を達成として記録（done=falseで取り消し）。
- * 習慣は共通の固定セット（migrationsで管理）。未知の名前はエラー。
- */
+/* ---------- 習慣 ---------- */
+
 export async function logHabit(
   db: D1Database,
+  userId: number,
   name: string,
   date: string,
   done: boolean,
@@ -135,19 +202,30 @@ export async function logHabit(
   }
   if (done) {
     await db
-      .prepare(`INSERT OR IGNORE INTO habit_logs (habit_id, date) VALUES (?1, ?2)`)
-      .bind(habit.id, date)
+      .prepare(`INSERT OR IGNORE INTO habit_logs (habit_id, user_id, date) VALUES (?1, ?2, ?3)`)
+      .bind(habit.id, userId, date)
       .run();
   } else {
     await db
-      .prepare(`DELETE FROM habit_logs WHERE habit_id = ?1 AND date = ?2`)
-      .bind(habit.id, date)
+      .prepare(`DELETE FROM habit_logs WHERE habit_id = ?1 AND user_id = ?2 AND date = ?3`)
+      .bind(habit.id, userId, date)
       .run();
   }
 }
 
+function calcStreak(done: Set<string>, todayStr: string): number {
+  let cursor = done.has(todayStr) ? todayStr : addDays(todayStr, -1);
+  let streak = 0;
+  while (done.has(cursor)) {
+    streak++;
+    cursor = addDays(cursor, -1);
+  }
+  return streak;
+}
+
 async function getHabitSummaries(
   db: D1Database,
+  userId: number,
   todayStr: string,
   rangeStart: string,
 ): Promise<HabitSummary[]> {
@@ -155,10 +233,12 @@ async function getHabitSummaries(
     .prepare(`SELECT id, name FROM habits WHERE archived = 0 ORDER BY id`)
     .all<{ id: number; name: string }>();
   if (habits.results.length === 0) return [];
-  // ストリーク計算のため過去1年分のログを取得
   const logs = await db
-    .prepare(`SELECT habit_id, date FROM habit_logs WHERE date >= ?1 AND date <= ?2`)
-    .bind(addDays(todayStr, -365), todayStr)
+    .prepare(
+      `SELECT habit_id, date FROM habit_logs
+       WHERE user_id = ?1 AND date >= ?2 AND date <= ?3`,
+    )
+    .bind(userId, addDays(todayStr, -365), todayStr)
     .all<{ habit_id: number; date: string }>();
   const byHabit = new Map<number, Set<string>>();
   for (const row of logs.results) {
@@ -168,69 +248,66 @@ async function getHabitSummaries(
   }
   return habits.results.map((habit) => {
     const done = byHabit.get(habit.id) ?? new Set<string>();
-    // 今日が未達成でも昨日までの連続を数える
-    let cursor = done.has(todayStr) ? todayStr : addDays(todayStr, -1);
-    let streak = 0;
-    while (done.has(cursor)) {
-      streak++;
-      cursor = addDays(cursor, -1);
-    }
     return {
       id: habit.id,
       name: habit.name,
-      streak,
+      streak: calcStreak(done, todayStr),
       done_today: done.has(todayStr),
       dates: [...done].filter((d) => d >= rangeStart).sort(),
     };
   });
 }
 
+/* ---------- サマリー ---------- */
+
 export async function getSummary(
   db: D1Database,
+  user: { id: number; name: string },
   todayStr: string,
   days: number,
 ): Promise<Summary> {
   const start = addDays(todayStr, -(days - 1));
 
-  const [goals, latest, weights, mealTotals, todayMeals, habits] =
-    await Promise.all([
-      getGoals(db),
-      db
-        .prepare(
-          `SELECT date, weight_kg, body_fat_pct, note FROM weights ORDER BY date DESC LIMIT 1`,
-        )
-        .first<WeightRow>(),
-      db
-        .prepare(
-          `SELECT date, weight_kg, body_fat_pct, note FROM weights
-           WHERE date >= ?1 AND date <= ?2 ORDER BY date`,
-        )
-        .bind(start, todayStr)
-        .all<WeightRow>(),
-      db
-        .prepare(
-          `SELECT date, SUM(calories) AS calories_in, SUM(protein_g) AS protein_g,
-                  SUM(fat_g) AS fat_g, SUM(carbs_g) AS carbs_g, COUNT(*) AS meal_count
-           FROM meals WHERE date >= ?1 AND date <= ?2 GROUP BY date`,
-        )
-        .bind(start, todayStr)
-        .all<{
-          date: string;
-          calories_in: number;
-          protein_g: number | null;
-          fat_g: number | null;
-          carbs_g: number | null;
-          meal_count: number;
-        }>(),
-      db
-        .prepare(
-          `SELECT id, date, meal_type, name, calories, protein_g, fat_g, carbs_g, note
-           FROM meals WHERE date = ?1 ORDER BY id`,
-        )
-        .bind(todayStr)
-        .all<MealRow>(),
-      getHabitSummaries(db, todayStr, start),
-    ]);
+  const [goals, latest, weights, mealTotals, todayMeals, habits] = await Promise.all([
+    getGoals(db, user.id),
+    db
+      .prepare(
+        `SELECT date, weight_kg, body_fat_pct, note FROM weights
+         WHERE user_id = ?1 ORDER BY date DESC LIMIT 1`,
+      )
+      .bind(user.id)
+      .first<WeightRow>(),
+    db
+      .prepare(
+        `SELECT date, weight_kg, body_fat_pct, note FROM weights
+         WHERE user_id = ?1 AND date >= ?2 AND date <= ?3 ORDER BY date`,
+      )
+      .bind(user.id, start, todayStr)
+      .all<WeightRow>(),
+    db
+      .prepare(
+        `SELECT date, SUM(calories) AS calories_in, SUM(protein_g) AS protein_g,
+                SUM(fat_g) AS fat_g, SUM(carbs_g) AS carbs_g, COUNT(*) AS meal_count
+         FROM meals WHERE user_id = ?1 AND date >= ?2 AND date <= ?3 GROUP BY date`,
+      )
+      .bind(user.id, start, todayStr)
+      .all<{
+        date: string;
+        calories_in: number;
+        protein_g: number | null;
+        fat_g: number | null;
+        carbs_g: number | null;
+        meal_count: number;
+      }>(),
+    db
+      .prepare(
+        `SELECT id, date, meal_type, name, calories, protein_g, fat_g, carbs_g, note
+         FROM meals WHERE user_id = ?1 AND date = ?2 ORDER BY id`,
+      )
+      .bind(user.id, todayStr)
+      .all<MealRow>(),
+    getHabitSummaries(db, user.id, todayStr, start),
+  ]);
 
   const mealsByDate = new Map(mealTotals.results.map((r) => [r.date, r]));
 
@@ -251,6 +328,7 @@ export async function getSummary(
   return {
     today: todayStr,
     days,
+    user: { id: user.id, name: user.name },
     goals,
     latest_weight: latest ?? null,
     weights: weights.results,
@@ -262,19 +340,23 @@ export async function getSummary(
 
 export async function listDay(
   db: D1Database,
+  userId: number,
   date: string,
 ): Promise<{ date: string; weight: WeightRow | null; meals: MealRow[] }> {
   const [weight, meals] = await Promise.all([
     db
-      .prepare(`SELECT date, weight_kg, body_fat_pct, note FROM weights WHERE date = ?1`)
-      .bind(date)
+      .prepare(
+        `SELECT date, weight_kg, body_fat_pct, note FROM weights
+         WHERE user_id = ?1 AND date = ?2`,
+      )
+      .bind(userId, date)
       .first<WeightRow>(),
     db
       .prepare(
         `SELECT id, date, meal_type, name, calories, protein_g, fat_g, carbs_g, note
-         FROM meals WHERE date = ?1 ORDER BY id`,
+         FROM meals WHERE user_id = ?1 AND date = ?2 ORDER BY id`,
       )
-      .bind(date)
+      .bind(userId, date)
       .all<MealRow>(),
   ]);
   return {
@@ -286,16 +368,121 @@ export async function listDay(
 
 export async function deleteEntry(
   db: D1Database,
+  userId: number,
   type: "meal" | "weight",
   opts: { id?: number; date?: string },
 ): Promise<number> {
   let res: D1Result;
   if (type === "meal") {
     if (opts.id === undefined) throw new Error("mealの削除にはidが必要です");
-    res = await db.prepare(`DELETE FROM meals WHERE id = ?1`).bind(opts.id).run();
+    res = await db
+      .prepare(`DELETE FROM meals WHERE id = ?1 AND user_id = ?2`)
+      .bind(opts.id, userId)
+      .run();
   } else {
     if (!opts.date) throw new Error("weightの削除にはdateが必要です");
-    res = await db.prepare(`DELETE FROM weights WHERE date = ?1`).bind(opts.date).run();
+    res = await db
+      .prepare(`DELETE FROM weights WHERE user_id = ?1 AND date = ?2`)
+      .bind(userId, opts.date)
+      .run();
   }
   return res.meta.changes ?? 0;
+}
+
+/* ---------- ランキング ---------- */
+
+export async function getRanking(
+  db: D1Database,
+  todayStr: string,
+  days: number,
+): Promise<Ranking> {
+  const start = addDays(todayStr, -(days - 1));
+
+  const [users, weightRows, mealDays, calorieTargets, kintore] = await Promise.all([
+    listUsers(db),
+    db
+      .prepare(
+        `SELECT user_id, date, weight_kg FROM weights
+         WHERE date >= ?1 AND date <= ?2 ORDER BY user_id, date`,
+      )
+      .bind(start, todayStr)
+      .all<{ user_id: number; date: string; weight_kg: number }>(),
+    db
+      .prepare(
+        `SELECT user_id, date, SUM(calories) AS calories_in
+         FROM meals WHERE date >= ?1 AND date <= ?2 GROUP BY user_id, date`,
+      )
+      .bind(start, todayStr)
+      .all<{ user_id: number; date: string; calories_in: number }>(),
+    db
+      .prepare(`SELECT user_id, value FROM goals WHERE key = 'daily_calorie_target'`)
+      .all<{ user_id: number; value: number }>(),
+    db
+      .prepare(
+        `SELECT hl.user_id, hl.date FROM habit_logs hl
+         JOIN habits h ON h.id = hl.habit_id
+         WHERE h.name = '筋トレ' AND hl.date >= ?1 AND hl.date <= ?2`,
+      )
+      .bind(addDays(todayStr, -365), todayStr)
+      .all<{ user_id: number; date: string }>(),
+  ]);
+
+  const weightsByUser = new Map<number, { date: string; weight_kg: number }[]>();
+  for (const row of weightRows.results) {
+    let list = weightsByUser.get(row.user_id);
+    if (!list) weightsByUser.set(row.user_id, (list = []));
+    list.push(row);
+  }
+  const targetByUser = new Map(calorieTargets.results.map((r) => [r.user_id, r.value]));
+  const mealsByUser = new Map<number, { date: string; calories_in: number }[]>();
+  for (const row of mealDays.results) {
+    let list = mealsByUser.get(row.user_id);
+    if (!list) mealsByUser.set(row.user_id, (list = []));
+    list.push(row);
+  }
+  const kintoreByUser = new Map<number, Set<string>>();
+  for (const row of kintore.results) {
+    let set = kintoreByUser.get(row.user_id);
+    if (!set) kintoreByUser.set(row.user_id, (set = new Set()));
+    set.add(row.date);
+  }
+
+  const entries: RankingEntry[] = users.map((user) => {
+    const weights = weightsByUser.get(user.id) ?? [];
+    const first = weights[0];
+    const last = weights[weights.length - 1];
+    const hasChange = weights.length >= 2 && first.weight_kg > 0;
+    const change = hasChange
+      ? ((last.weight_kg - first.weight_kg) / first.weight_kg) * 100
+      : null;
+
+    const target = targetByUser.get(user.id);
+    const dayList = mealsByUser.get(user.id) ?? [];
+    const within =
+      target === undefined
+        ? 0
+        : dayList.filter((d) => d.calories_in <= target).length;
+    const adherence =
+      target === undefined || dayList.length === 0
+        ? null
+        : (within / dayList.length) * 100;
+
+    const kintoreSet = kintoreByUser.get(user.id) ?? new Set<string>();
+    const kintoreInRange = [...kintoreSet].filter((d) => d >= start).length;
+
+    return {
+      user_id: user.id,
+      name: user.name,
+      weight_start: hasChange ? first.weight_kg : (last?.weight_kg ?? null),
+      weight_now: last?.weight_kg ?? null,
+      weight_change_pct: change === null ? null : Math.round(change * 100) / 100,
+      calorie_days_recorded: dayList.length,
+      calorie_days_within: target === undefined ? 0 : within,
+      calorie_adherence_pct: adherence === null ? null : Math.round(adherence),
+      kintore_count: kintoreInRange,
+      kintore_streak: calcStreak(kintoreSet, todayStr),
+    };
+  });
+
+  return { days, entries };
 }

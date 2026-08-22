@@ -138,6 +138,17 @@
   .hcell.done { background: var(--good-fill); border-color: transparent; }
   .hcell.today { box-shadow: 0 0 0 2px var(--baseline); }
 
+  .rank-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+  .rank-block h3 { font-size: 13px; font-weight: 600; margin: 0 0 6px; color: var(--ink-2); }
+  table.rank { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.rank td { padding: 5px 6px; border-bottom: 1px solid var(--grid); }
+  table.rank tr:last-child td { border-bottom: none; }
+  table.rank .pos { width: 24px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  table.rank .val { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  table.rank .sub { color: var(--muted); font-weight: 400; font-size: 12px; }
+  table.rank tr.me td { background: color-mix(in srgb, var(--s1) 8%, transparent); }
+  table.rank tr.me .who::after { content: "（あなた）"; color: var(--muted); font-size: 11px; }
+
   .auth { max-width: 420px; margin: 60px auto; text-align: center; }
   .auth input { font: inherit; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); width: 100%; margin: 12px 0; }
   .auth button { font: inherit; padding: 8px 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--ink); cursor: pointer; }
@@ -154,6 +165,7 @@ const app = document.getElementById("app");
 let DAYS = Number(localStorage.getItem("diet_days") || 30);
 if (![7, 14, 30, 90].includes(DAYS)) DAYS = 30;
 let SUMMARY = null;
+let RANKING = null;
 
 const cssVar = (name) =>
   getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -174,9 +186,12 @@ function authHeaders() {
 }
 
 async function load() {
-  let res;
+  let res, rankRes;
   try {
-    res = await fetch(`/api/summary?days=${DAYS}`, { headers: authHeaders() });
+    [res, rankRes] = await Promise.all([
+      fetch(`/api/summary?days=${DAYS}`, { headers: authHeaders() }),
+      fetch(`/api/ranking?days=${Math.max(7, DAYS)}`, { headers: authHeaders() }),
+    ]);
   } catch {
     renderError("サーバーに接続できませんでした。");
     return;
@@ -187,6 +202,7 @@ async function load() {
     return;
   }
   SUMMARY = await res.json();
+  RANKING = rankRes.ok ? await rankRes.json() : null;
   render();
 }
 
@@ -296,6 +312,8 @@ const CH = 220;
 function frame(svg, w, yTicks, yScale, unit) {
   for (const t of yTicks) {
     const y = yScale(t);
+    if (unit && y < M.top + 10) continue; // 単位ラベルと重なる最上部の目盛りは省く
+
     svg.appendChild(s("line", { x1: M.left, x2: w - M.right, y1: y, y2: y, stroke: cssVar("--grid"), "stroke-width": 1 }));
     svg.appendChild(s("text", {
       x: M.left - 8, y: y + 4, "text-anchor": "end",
@@ -721,6 +739,75 @@ function habitsCard() {
   return card;
 }
 
+/* ---------- ranking ---------- */
+function rankTable(entries, meId, valueOf) {
+  const table = h("table", { class: "rank" });
+  const tbody = h("tbody");
+  let pos = 0;
+  for (const e of entries) {
+    pos++;
+    const v = valueOf(e);
+    const tr = h("tr", { class: e.user_id === meId ? "me" : "" },
+      h("td", { class: "pos" }, pos <= 3 ? ["🥇", "🥈", "🥉"][pos - 1] : String(pos)),
+      h("td", { class: "who" }, e.name),
+      h("td", { class: "val" }, v.main, v.sub ? h("span", { class: "sub" }, " " + v.sub) : null));
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  return table;
+}
+
+function rankingCard() {
+  const rk = RANKING;
+  const card = h("div", { class: "card" },
+    h("h2", {}, "ランキング"),
+    h("p", { class: "desc" }, `直近${rk ? rk.days : "-"}日の全ユーザー比較です。`));
+  if (!rk || rk.entries.length <= 1) {
+    card.appendChild(h("div", { class: "empty" },
+      "まだ比較できるユーザーがいません。管理者がAIセッションで「◯◯さんを追加して」と言うとユーザーを増やせます。"));
+    return card;
+  }
+  const meId = SUMMARY.user.id;
+  const grid = h("div", { class: "rank-grid" });
+
+  const byChange = rk.entries
+    .filter((e) => e.weight_change_pct !== null)
+    .sort((a, b) => a.weight_change_pct - b.weight_change_pct);
+  grid.appendChild(h("div", { class: "rank-block" },
+    h("h3", {}, "体重変化率"),
+    byChange.length
+      ? rankTable(byChange, meId, (e) => ({
+          main: `${e.weight_change_pct > 0 ? "+" : ""}${fmt(e.weight_change_pct, 2)}%`,
+          sub: `${fmt(e.weight_now, 1)}kg`,
+        }))
+      : h("div", { class: "empty" }, "体重の記録が2日分あるユーザーがいません")));
+
+  const byAdherence = rk.entries
+    .filter((e) => e.calorie_adherence_pct !== null)
+    .sort((a, b) => b.calorie_adherence_pct - a.calorie_adherence_pct);
+  grid.appendChild(h("div", { class: "rank-block" },
+    h("h3", {}, "カロリー目標達成率"),
+    byAdherence.length
+      ? rankTable(byAdherence, meId, (e) => ({
+          main: `${fmt(e.calorie_adherence_pct)}%`,
+          sub: `${e.calorie_days_within}/${e.calorie_days_recorded}日`,
+        }))
+      : h("div", { class: "empty" }, "カロリー目標を設定したユーザーがいません")));
+
+  const byKintore = rk.entries
+    .slice()
+    .sort((a, b) => b.kintore_count - a.kintore_count || b.kintore_streak - a.kintore_streak);
+  grid.appendChild(h("div", { class: "rank-block" },
+    h("h3", {}, "筋トレ"),
+    rankTable(byKintore, meId, (e) => ({
+      main: `${fmt(e.kintore_count)}回`,
+      sub: e.kintore_streak > 0 ? `🔥${e.kintore_streak}日` : "",
+    }))));
+
+  card.appendChild(grid);
+  return card;
+}
+
 /* ---------- data table ---------- */
 function dataTable() {
   const sm = SUMMARY;
@@ -769,7 +856,7 @@ function render() {
 
   app.appendChild(h("header", { class: "top" },
     h("h1", {}, "ダイエットダッシュボード"),
-    h("span", { class: "sub" }, `今日: ${sm.today} ・ 直近${sm.days}日`)));
+    h("span", { class: "sub" }, `${sm.user.name} さん ・ 今日: ${sm.today} ・ 直近${sm.days}日`)));
 
   const filters = h("div", { class: "filters", role: "group", "aria-label": "表示期間" });
   for (const d of [7, 14, 30, 90]) {
@@ -786,6 +873,7 @@ function render() {
   app.appendChild(chartCard("PFCバランス", "たんぱく質・脂質・炭水化物の1日合計 (g) です。", pfcChart,
     PFC.map((p) => ({ varName: p.varName, label: p.label }))));
   app.appendChild(habitsCard());
+  app.appendChild(rankingCard());
   app.appendChild(dataTable());
   app.appendChild(todayCard());
 

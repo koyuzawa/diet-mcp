@@ -7,6 +7,33 @@ export interface Env {
   TZ_OFFSET_HOURS?: string;
 }
 
+export interface AuthUser {
+  id: number;
+  name: string;
+  admin: boolean;
+}
+
+export interface RankingEntry {
+  user_id: number;
+  name: string;
+  /** 期間の最初と最後の体重（記録が2点未満ならnull） */
+  weight_start: number | null;
+  weight_now: number | null;
+  weight_change_pct: number | null;
+  /** カロリー目標達成率: 記録がある日のうち目標以内だった日の割合（目標未設定ならnull） */
+  calorie_days_recorded: number;
+  calorie_days_within: number;
+  calorie_adherence_pct: number | null;
+  /** 筋トレ: 期間内の回数と現在の連続日数 */
+  kintore_count: number;
+  kintore_streak: number;
+}
+
+export interface Ranking {
+  days: number;
+  entries: RankingEntry[];
+}
+
 export interface WeightRow {
   date: string;
   weight_kg: number;
@@ -54,6 +81,7 @@ export interface HabitSummary {
 export interface Summary {
   today: string;
   days: number;
+  user: { id: number; name: string };
   goals: Goals;
   latest_weight: WeightRow | null;
   weights: WeightRow[];

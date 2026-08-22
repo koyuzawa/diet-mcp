@@ -1,25 +1,30 @@
 import {
+  createUser,
   deleteEntry,
+  getRanking,
   getSummary,
   insertMeal,
   listDay,
+  listUsers,
   logHabit,
   normalizeDate,
+  renameUser,
   setGoals,
   today,
   upsertWeight,
 } from "./data";
-import type { Env, Goals } from "./types";
+import type { AuthUser, Env, Goals } from "./types";
 
-const SERVER_INFO = { name: "diet-mcp", version: "0.1.0" };
+const SERVER_INFO = { name: "diet-mcp", version: "0.3.0" };
 const SUPPORTED_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
 const LATEST_PROTOCOL_VERSION = SUPPORTED_PROTOCOL_VERSIONS[0];
 
 const INSTRUCTIONS = [
-  "ダイエット（体重・食事・習慣）記録用のMCPサーバーです。",
+  "ダイエット（体重・食事・習慣）記録用のマルチユーザーMCPサーバーです。記録は接続トークンに紐づくユーザーのものになります。",
   "ユーザーがダイエットセッション中に体重・食べたものを口にしたら、対応するツールでこまめに記録してください。",
   "食事はカロリーが分からなければ一般的な値を推定して calories に入れ、note にその旨を書いてください。",
   "習慣トラッカーもあります（共通の固定セット。現在は「筋トレ」のみ）。ユーザーが筋トレをしたと言ったら log_habit でチェックしてください。",
+  "get_ranking でユーザー間のランキング（体重変化率・カロリー目標達成率・筋トレ）が見られます。",
   "記録はダッシュボード（このサーバーのルートURL）に即時反映されます。",
 ].join("\n");
 
@@ -34,7 +39,7 @@ interface ToolDef {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  handler: (env: Env, args: Record<string, unknown>) => Promise<string>;
+  handler: (env: Env, user: AuthUser, args: Record<string, unknown>) => Promise<string>;
 }
 
 const dateProp = {
@@ -84,10 +89,10 @@ const TOOLS: ToolDef[] = [
       },
       required: ["weight_kg"],
     },
-    handler: async (env, args) => {
+    handler: async (env, user, args) => {
       const date = normalizeDate(env, args.date);
       const weight_kg = requireNum(args, "weight_kg");
-      await upsertWeight(env.DB, {
+      await upsertWeight(env.DB, user.id, {
         date,
         weight_kg,
         body_fat_pct: num(args, "body_fat_pct"),
@@ -118,11 +123,11 @@ const TOOLS: ToolDef[] = [
       },
       required: ["name", "calories"],
     },
-    handler: async (env, args) => {
+    handler: async (env, user, args) => {
       const date = normalizeDate(env, args.date);
       const name = requireStr(args, "name");
       const calories = requireNum(args, "calories");
-      const id = await insertMeal(env.DB, {
+      const id = await insertMeal(env.DB, user.id, {
         date,
         meal_type: str(args, "meal_type") ?? "other",
         name,
@@ -148,11 +153,11 @@ const TOOLS: ToolDef[] = [
       },
       required: ["name"],
     },
-    handler: async (env, args) => {
+    handler: async (env, user, args) => {
       const date = normalizeDate(env, args.date);
       const name = requireStr(args, "name");
       const done = args.done === undefined ? true : Boolean(args.done);
-      await logHabit(env.DB, name, date, done);
+      await logHabit(env.DB, user.id, name, date, done);
       return done
         ? `${date} の「${name}」を達成として記録しました。`
         : `${date} の「${name}」のチェックを取り消しました。`;
@@ -170,20 +175,20 @@ const TOOLS: ToolDef[] = [
         daily_protein_target_g: { type: "number", description: "1日のたんぱく質目標 (g)" },
       },
     },
-    handler: async (env, args) => {
+    handler: async (env, user, args) => {
       const goals: Goals = {
         target_weight_kg: num(args, "target_weight_kg"),
         daily_calorie_target: num(args, "daily_calorie_target"),
         daily_protein_target_g: num(args, "daily_protein_target_g"),
       };
-      const updated = await setGoals(env.DB, goals);
+      const updated = await setGoals(env.DB, user.id, goals);
       return `目標を更新しました:\n${JSON.stringify(updated, null, 2)}`;
     },
   },
   {
     name: "get_summary",
     description:
-      "直近の記録のサマリーを取得する（体重推移・日別カロリー/PFC・目標・習慣・今日の食事）。セッション開始時に呼んで状況を把握するとよい。",
+      "自分の直近の記録のサマリーを取得する（体重推移・日別カロリー/PFC・目標・習慣・今日の食事）。セッション開始時に呼んで状況を把握するとよい。",
     inputSchema: {
       type: "object",
       properties: {
@@ -195,29 +200,103 @@ const TOOLS: ToolDef[] = [
         },
       },
     },
-    handler: async (env, args) => {
+    handler: async (env, user, args) => {
       const days = Math.min(90, Math.max(1, num(args, "days") ?? 14));
-      const summary = await getSummary(env.DB, today(env), days);
+      const summary = await getSummary(env.DB, user, today(env), days);
       return JSON.stringify(summary, null, 2);
     },
   },
   {
+    name: "get_ranking",
+    description:
+      "全ユーザーのランキングを取得する（体重変化率・カロリー目標達成率・筋トレ回数/連続日数）。「みんなの調子は?」「ランキング見せて」のときに呼ぶ。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        days: {
+          type: "integer",
+          minimum: 7,
+          maximum: 90,
+          description: "集計期間（日数、既定30）",
+        },
+      },
+    },
+    handler: async (env, user, args) => {
+      const days = Math.min(90, Math.max(7, num(args, "days") ?? 30));
+      const ranking = await getRanking(env.DB, today(env), days);
+      return JSON.stringify(ranking, null, 2);
+    },
+  },
+  {
+    name: "set_name",
+    description: "ランキングなどに表示される自分の名前を変更する。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "新しい表示名" },
+      },
+      required: ["name"],
+    },
+    handler: async (env, user, args) => {
+      const name = requireStr(args, "name");
+      await renameUser(env.DB, user.id, name);
+      return `表示名を「${name}」に変更しました。`;
+    },
+  },
+  {
+    name: "create_user",
+    description:
+      "新しいユーザーを追加してアクセストークンを発行する（管理者のみ）。発行されたトークンを本人に渡し、コネクタURL https://<このサーバー>/mcp?token=<トークン> で接続してもらう。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "ユーザーの表示名" },
+      },
+      required: ["name"],
+    },
+    handler: async (env, user, args) => {
+      if (!user.admin) throw new Error("ユーザーの追加は管理者のみ可能です");
+      const name = requireStr(args, "name");
+      const created = await createUser(env.DB, name);
+      return [
+        `ユーザー「${name}」を追加しました (id: ${created.id})。`,
+        `トークン: ${created.token}`,
+        "本人への案内:",
+        `- MCPコネクタURL: <このサーバーのURL>/mcp?token=${created.token}`,
+        `- ダッシュボード: <このサーバーのURL>/ を開いてトークンを入力`,
+      ].join("\n");
+    },
+  },
+  {
+    name: "list_users",
+    description: "登録ユーザーの一覧（idと名前）を取得する。",
+    inputSchema: { type: "object", properties: {} },
+    handler: async (env, _user, _args) => {
+      const users = await listUsers(env.DB);
+      return JSON.stringify(
+        users.map((u) => ({ id: u.id, name: u.name })),
+        null,
+        2,
+      );
+    },
+  },
+  {
     name: "list_day",
-    description: "指定日の記録（体重・食事）をID付きで一覧する。修正・削除の前に呼ぶ。",
+    description: "指定日の自分の記録（体重・食事）をID付きで一覧する。修正・削除の前に呼ぶ。",
     inputSchema: {
       type: "object",
       properties: { date: dateProp },
     },
-    handler: async (env, args) => {
+    handler: async (env, user, args) => {
       const date = normalizeDate(env, args.date);
-      const day = await listDay(env.DB, date);
+      const day = await listDay(env.DB, user.id, date);
       return JSON.stringify(day, null, 2);
     },
   },
   {
     name: "delete_entry",
     description:
-      "記録を削除する。食事は list_day で確認した id を、体重は date を指定する。",
+      "自分の記録を削除する。食事は list_day で確認した id を、体重は date を指定する。",
     inputSchema: {
       type: "object",
       properties: {
@@ -227,12 +306,12 @@ const TOOLS: ToolDef[] = [
       },
       required: ["type"],
     },
-    handler: async (env, args) => {
+    handler: async (env, user, args) => {
       const type = requireStr(args, "type");
       if (type !== "meal" && type !== "weight") {
         throw new Error("type は meal / weight のいずれかです");
       }
-      const deleted = await deleteEntry(env.DB, type, {
+      const deleted = await deleteEntry(env.DB, user.id, type, {
         id: num(args, "id"),
         date: str(args, "date"),
       });
@@ -249,7 +328,11 @@ function rpcError(id: number | string | null, code: number, message: string) {
   return { jsonrpc: "2.0", id, error: { code, message } };
 }
 
-async function handleRequest(env: Env, req: JsonRpcRequest): Promise<object | null> {
+async function handleRequest(
+  env: Env,
+  user: AuthUser,
+  req: JsonRpcRequest,
+): Promise<object | null> {
   const id = req.id ?? null;
   const isNotification = req.id === undefined;
 
@@ -291,7 +374,7 @@ async function handleRequest(env: Env, req: JsonRpcRequest): Promise<object | nu
       if (!tool) return rpcError(id, -32602, `Unknown tool: ${name}`);
       const args = (params.arguments ?? {}) as Record<string, unknown>;
       try {
-        const text = await tool.handler(env, args);
+        const text = await tool.handler(env, user, args);
         return rpcResult(id, { content: [{ type: "text", text }], isError: false });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -307,7 +390,7 @@ async function handleRequest(env: Env, req: JsonRpcRequest): Promise<object | nu
 }
 
 /** ステートレスなStreamable HTTPエンドポイント (POST /mcp) */
-export async function handleMcp(request: Request, env: Env): Promise<Response> {
+export async function handleMcp(request: Request, env: Env, user: AuthUser): Promise<Response> {
   if (request.method === "DELETE") {
     // セッション終了要求。ステートレスなので何もしない
     return new Response(null, { status: 200 });
@@ -334,7 +417,7 @@ export async function handleMcp(request: Request, env: Env): Promise<Response> {
     : [body as JsonRpcRequest];
   const responses: object[] = [];
   for (const r of requests) {
-    const res = await handleRequest(env, r);
+    const res = await handleRequest(env, user, r);
     if (res !== null) responses.push(res);
   }
 

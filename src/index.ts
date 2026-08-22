@@ -1,6 +1,6 @@
-import { getSummary, today } from "./data";
+import { findUserByToken, getAdminUser, getRanking, getSummary, today } from "./data";
 import { handleMcp } from "./mcp";
-import type { Env } from "./types";
+import type { AuthUser, Env } from "./types";
 
 const CORS_HEADERS: Record<string, string> = {
   "access-control-allow-origin": "*",
@@ -25,14 +25,20 @@ function timingSafeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
-/** AUTH_TOKEN が設定されている場合のみ認証を要求する */
-function authorized(request: Request, url: URL, env: Env): boolean {
-  const token = env.AUTH_TOKEN;
-  if (!token) return true;
+/**
+ * トークンからユーザーを解決する。
+ * - AUTH_TOKEN（管理者トークン）ならユーザー1（管理者）
+ * - usersテーブルのトークンならそのユーザー
+ * - AUTH_TOKEN未設定の環境（ローカル開発）ではすべてユーザー1（管理者）
+ */
+async function resolveUser(request: Request, url: URL, env: Env): Promise<AuthUser | null> {
+  if (!env.AUTH_TOKEN) return getAdminUser(env.DB);
   const header = request.headers.get("authorization") ?? "";
   const bearer = header.startsWith("Bearer ") ? header.slice(7) : "";
-  const query = url.searchParams.get("token") ?? "";
-  return timingSafeEqual(bearer, token) || timingSafeEqual(query, token);
+  const token = bearer || (url.searchParams.get("token") ?? "");
+  if (!token) return null;
+  if (timingSafeEqual(token, env.AUTH_TOKEN)) return getAdminUser(env.DB);
+  return findUserByToken(env.DB, token);
 }
 
 function unauthorized(): Response {
@@ -47,19 +53,27 @@ function unauthorized(): Response {
   );
 }
 
-async function handleApi(request: Request, env: Env, url: URL): Promise<Response> {
+async function handleApi(
+  request: Request,
+  env: Env,
+  url: URL,
+  user: AuthUser,
+): Promise<Response> {
   if (request.method !== "GET") {
     return new Response(JSON.stringify({ error: "method not allowed" }), {
       status: 405,
       headers: { "content-type": "application/json" },
     });
   }
+  const jsonHeaders = { "content-type": "application/json", "cache-control": "no-store" };
+  const days = Math.min(90, Math.max(1, Number(url.searchParams.get("days")) || 30));
   if (url.pathname === "/api/summary") {
-    const days = Math.min(90, Math.max(1, Number(url.searchParams.get("days")) || 30));
-    const summary = await getSummary(env.DB, today(env), days);
-    return new Response(JSON.stringify(summary), {
-      headers: { "content-type": "application/json", "cache-control": "no-store" },
-    });
+    const summary = await getSummary(env.DB, user, today(env), days);
+    return new Response(JSON.stringify(summary), { headers: jsonHeaders });
+  }
+  if (url.pathname === "/api/ranking") {
+    const ranking = await getRanking(env.DB, today(env), Math.max(7, days));
+    return new Response(JSON.stringify(ranking), { headers: jsonHeaders });
   }
   return new Response(JSON.stringify({ error: "not found" }), {
     status: 404,
@@ -76,11 +90,12 @@ export default {
     }
 
     if (url.pathname === "/mcp" || url.pathname.startsWith("/api/")) {
-      if (!authorized(request, url, env)) return unauthorized();
+      const user = await resolveUser(request, url, env);
+      if (!user) return unauthorized();
       const res =
         url.pathname === "/mcp"
-          ? await handleMcp(request, env)
-          : await handleApi(request, env, url);
+          ? await handleMcp(request, env, user)
+          : await handleApi(request, env, url, user);
       return withCors(res);
     }
 
