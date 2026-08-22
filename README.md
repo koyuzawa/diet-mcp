@@ -76,6 +76,13 @@ claude mcp add --transport http diet https://<あなたのWorker>.workers.dev/mc
 > 「昼にサラダチキンとおにぎり食べた」→ カロリーを推定して `log_meal`
 > 「目標体重は60kgにする。1日1800kcalまで」→ `set_goals`
 
+## CI（自動デプロイ）
+
+pushすると GitHub Actions が typecheck → D1マイグレーション適用 → デプロイを自動実行します
+（`.github/workflows/deploy.yml`）。有効にするには、リポジトリの
+**Settings → Secrets and variables → Actions** に `CLOUDFLARE_API_TOKEN`
+（Workers編集 + D1編集権限のAPIトークン）を登録してください。
+
 ## ローカル開発
 
 ### VS Code Dev Container（いちばん簡単）
