@@ -785,7 +785,7 @@ function rankingCard() {
     byChange.length
       ? rankTable(byChange, meId, (e) => ({
           main: `${e.weight_change_pct > 0 ? "+" : ""}${fmt(e.weight_change_pct, 2)}%`,
-          sub: `${fmt(e.weight_now, 1)}kg`,
+          sub: "",
         }))
       : h("div", { class: "empty" }, "体重の記録が2日分あるユーザーがいません")));
 

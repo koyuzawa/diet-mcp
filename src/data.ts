@@ -486,8 +486,6 @@ export async function getRanking(
     return {
       user_id: user.id,
       name: user.name,
-      weight_start: hasChange ? first.weight_kg : (last?.weight_kg ?? null),
-      weight_now: last?.weight_kg ?? null,
       weight_change_pct: change === null ? null : Math.round(change * 100) / 100,
       calorie_days_recorded: dayList.length,
       calorie_days_within: target === undefined ? 0 : within,

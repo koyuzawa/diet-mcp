@@ -16,9 +16,7 @@ export interface AuthUser {
 export interface RankingEntry {
   user_id: number;
   name: string;
-  /** 期間の最初と最後の体重（記録が2点未満ならnull） */
-  weight_start: number | null;
-  weight_now: number | null;
+  /** 体重変化率(%)。実数値(kg)はプライバシーのためランキングには含めない */
   weight_change_pct: number | null;
   /** カロリー目標達成率: 記録がある日のうち目標以内だった日の割合（目標未設定ならnull） */
   calorie_days_recorded: number;
