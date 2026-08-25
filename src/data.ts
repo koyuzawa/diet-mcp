@@ -76,6 +76,30 @@ export async function createUser(
   return { id: Number(res.meta.last_row_id), token };
 }
 
+/** ClaudeセッションのURLを保存する（nullで削除）。https:// のURLのみ許可 */
+export async function setSessionUrl(
+  db: D1Database,
+  userId: number,
+  url: string | null,
+): Promise<void> {
+  if (url !== null) {
+    const trimmed = url.trim();
+    if (!/^https:\/\/[^\s]+$/.test(trimmed) || trimmed.length > 500) {
+      throw new Error("URLは https:// で始まる有効なURLを指定してください");
+    }
+    url = trimmed;
+  }
+  await db.prepare(`UPDATE users SET session_url = ?1 WHERE id = ?2`).bind(url, userId).run();
+}
+
+export async function getSessionUrl(db: D1Database, userId: number): Promise<string | null> {
+  const row = await db
+    .prepare(`SELECT session_url FROM users WHERE id = ?1`)
+    .bind(userId)
+    .first<{ session_url: string | null }>();
+  return row?.session_url ?? null;
+}
+
 export async function renameUser(
   db: D1Database,
   userId: number,
@@ -268,7 +292,7 @@ export async function getSummary(
 ): Promise<Summary> {
   const start = addDays(todayStr, -(days - 1));
 
-  const [goals, latest, weights, mealTotals, todayMeals, habits] = await Promise.all([
+  const [goals, latest, weights, mealTotals, todayMeals, habits, sessionUrl] = await Promise.all([
     getGoals(db, user.id),
     db
       .prepare(
@@ -307,6 +331,7 @@ export async function getSummary(
       .bind(user.id, todayStr)
       .all<MealRow>(),
     getHabitSummaries(db, user.id, todayStr, start),
+    getSessionUrl(db, user.id),
   ]);
 
   const mealsByDate = new Map(mealTotals.results.map((r) => [r.date, r]));
@@ -328,7 +353,7 @@ export async function getSummary(
   return {
     today: todayStr,
     days,
-    user: { id: user.id, name: user.name },
+    user: { id: user.id, name: user.name, session_url: sessionUrl },
     goals,
     latest_weight: latest ?? null,
     weights: weights.results,

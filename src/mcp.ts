@@ -1,6 +1,7 @@
 import {
   createUser,
   deleteEntry,
+  setSessionUrl,
   getRanking,
   getSummary,
   insertMeal,
@@ -225,6 +226,27 @@ const TOOLS: ToolDef[] = [
       const days = Math.min(90, Math.max(7, num(args, "days") ?? 30));
       const ranking = await getRanking(env.DB, today(env), days);
       return JSON.stringify(ranking, null, 2);
+    },
+  },
+  {
+    name: "set_session_url",
+    description:
+      "自分のClaudeセッションの共有URLを登録する。登録するとダッシュボードの上部に「セッションを開く」リンクが表示される。ユーザーが会話の共有URLを渡してきたら呼ぶ。url省略で削除。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          description: "Claudeセッションの共有URL (https://claude.ai/share/... など)。省略すると登録解除",
+        },
+      },
+    },
+    handler: async (env, user, args) => {
+      const url = str(args, "url");
+      await setSessionUrl(env.DB, user.id, url && url.trim() !== "" ? url : null);
+      return url && url.trim() !== ""
+        ? "セッションURLを登録しました。ダッシュボード上部にリンクが表示されます。"
+        : "セッションURLの登録を解除しました。";
     },
   },
   {

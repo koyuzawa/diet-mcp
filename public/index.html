@@ -57,6 +57,13 @@
   header.top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
   header.top h1 { font-size: 20px; font-weight: 700; margin: 0; }
   header.top .sub { color: var(--muted); font-size: 12px; }
+  a.session-link {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 13px; color: var(--ink); text-decoration: none;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 5px 12px; margin-bottom: 14px;
+  }
+  a.session-link:hover { border-color: var(--baseline); }
 
   .filters { display: flex; gap: 6px; margin-bottom: 16px; }
   .filters button {
@@ -900,6 +907,13 @@ function render() {
   app.appendChild(h("header", { class: "top" },
     h("h1", {}, "ダイエットダッシュボード"),
     h("span", { class: "sub" }, `${sm.user.name} さん ・ 今日: ${sm.today} ・ 直近${sm.days}日`)));
+
+  if (sm.user.session_url && /^https:\/\//.test(sm.user.session_url)) {
+    const link = h("a", { class: "session-link", target: "_blank", rel: "noopener" },
+      "💬 ダイエットセッションを開く");
+    link.href = sm.user.session_url;
+    app.appendChild(link);
+  }
 
   const filters = h("div", { class: "filters", role: "group", "aria-label": "表示期間" });
   for (const d of [7, 14, 30, 90]) {

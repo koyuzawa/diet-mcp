@@ -83,7 +83,7 @@ export interface HabitSummary {
 export interface Summary {
   today: string;
   days: number;
-  user: { id: number; name: string };
+  user: { id: number; name: string; session_url: string | null };
   goals: Goals;
   latest_weight: WeightRow | null;
   weights: WeightRow[];
